@@ -1,0 +1,172 @@
+-- ══════════════════════════════════════════════════════════════
+-- MAILONE — Schéma Supabase
+-- Exécutez ce fichier dans Supabase → SQL Editor → New query
+-- ══════════════════════════════════════════════════════════════
+
+-- ── EXTENSION UUID ───────────────────────────────────────────
+create extension if not exists "uuid-ossp";
+
+-- ── TABLE USERS ──────────────────────────────────────────────
+create table if not exists users (
+  id            uuid primary key default uuid_generate_v4(),
+  email         text unique not null,
+  password_hash text not null,
+  first_name    text,
+  last_name     text,
+  company       text,
+  phone         text,
+  sector        text,
+  marketing     boolean default false,
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now(),
+  last_login    timestamptz,
+  is_active     boolean default true
+);
+
+-- ── TABLE SUBSCRIPTIONS ──────────────────────────────────────
+create table if not exists subscriptions (
+  id                    uuid primary key default uuid_generate_v4(),
+  user_id               uuid references users(id) on delete cascade,
+  stripe_customer_id    text unique,
+  stripe_subscription_id text unique,
+  plan                  text check (plan in ('solo','team','enterprise')),
+  billing               text check (billing in ('monthly','annual')),
+  status                text check (status in ('trialing','active','past_due','canceled','incomplete')),
+  trial_end             timestamptz,
+  current_period_start  timestamptz,
+  current_period_end    timestamptz,
+  cancel_at_period_end  boolean default false,
+  created_at            timestamptz default now(),
+  updated_at            timestamptz default now()
+);
+
+-- ── TABLE REFERRALS ──────────────────────────────────────────
+create table if not exists referrals (
+  id              uuid primary key default uuid_generate_v4(),
+  referrer_id     uuid references users(id) on delete cascade,
+  referee_id      uuid references users(id) on delete cascade,
+  referral_code   text unique not null,
+  status          text check (status in ('pending','trial','converted','rewarded')) default 'pending',
+  reward_months   int default 0,
+  reward_applied  boolean default false,
+  created_at      timestamptz default now(),
+  converted_at    timestamptz
+);
+
+-- ── TABLE EMAIL LOGS ─────────────────────────────────────────
+create table if not exists email_logs (
+  id          uuid primary key default uuid_generate_v4(),
+  user_id     uuid references users(id) on delete set null,
+  type        text not null,
+  to_email    text not null,
+  status      text default 'sent',
+  resend_id   text,
+  created_at  timestamptz default now()
+);
+
+-- ── TABLE SESSIONS (optionnel, si pas JWT) ───────────────────
+create table if not exists sessions (
+  id          uuid primary key default uuid_generate_v4(),
+  user_id     uuid references users(id) on delete cascade,
+  token_hash  text unique not null,
+  user_agent  text,
+  ip_address  text,
+  expires_at  timestamptz not null,
+  created_at  timestamptz default now()
+);
+
+-- ── ROW LEVEL SECURITY ───────────────────────────────────────
+alter table users enable row level security;
+alter table subscriptions enable row level security;
+alter table referrals enable row level security;
+
+-- Policy : chaque user ne voit que ses propres données
+create policy "Users can read own data" on users
+  for select using (auth.uid()::text = id::text);
+
+create policy "Users can update own data" on users
+  for update using (auth.uid()::text = id::text);
+
+create policy "Users can read own subscription" on subscriptions
+  for select using (auth.uid()::text = user_id::text);
+
+-- ── INDEXES ──────────────────────────────────────────────────
+create index if not exists idx_users_email on users(email);
+create index if not exists idx_subscriptions_user_id on subscriptions(user_id);
+create index if not exists idx_subscriptions_stripe_customer on subscriptions(stripe_customer_id);
+create index if not exists idx_referrals_code on referrals(referral_code);
+create index if not exists idx_referrals_referrer on referrals(referrer_id);
+
+-- ── TRIGGER updated_at ───────────────────────────────────────
+create or replace function update_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger update_users_updated_at
+  before update on users
+  for each row execute function update_updated_at();
+
+create trigger update_subscriptions_updated_at
+  before update on subscriptions
+  for each row execute function update_updated_at();
+
+-- ══════════════════════════════════════════════════════════════
+-- ✅ Schéma créé avec succès
+-- Prochaine étape : déployez le backend et configurez les variables .env
+-- ══════════════════════════════════════════════════════════════
+
+-- ── TABLE AI_USAGE (quotas fair use) ─────────────────────────
+-- Ajoutez cette table à votre schéma existant
+create table if not exists ai_usage (
+  id          uuid primary key default uuid_generate_v4(),
+  user_id     uuid references users(id) on delete cascade,
+  month_key   text not null,   -- format : "2025-03"
+  count       int default 0,
+  updated_at  timestamptz default now(),
+  unique(user_id, month_key)
+);
+
+create index if not exists idx_ai_usage_user_month on ai_usage(user_id, month_key);
+
+-- ── OPTION 3 : BASCULE AUTOMATIQUE VERS AGENT LOCAL ──────────
+-- Commentaire dans le code frontend :
+-- Quand l'API retourne { code: 'QUOTA_EXCEEDED', fallback: 'local_agent' }
+-- Le frontend bascule automatiquement sur AGENT.type() local
+-- L'utilisateur voit un message : "Quota mensuel atteint — agent local activé"
+
+-- ── TABLE EMAIL_SEQUENCE (tracking emails onboarding) ────────
+-- Ajoutez cette table pour tracker quels emails ont été envoyés
+create table if not exists email_sequence (
+  id              uuid primary key default uuid_generate_v4(),
+  user_id         uuid references users(id) on delete cascade,
+  welcome_sent    boolean default false,
+  welcome_sent_at timestamptz,
+  j3_sent         boolean default false,
+  j3_sent_at      timestamptz,
+  j11_sent        boolean default false,
+  j11_sent_at     timestamptz,
+  j14_sent        boolean default false,
+  j14_sent_at     timestamptz,
+  created_at      timestamptz default now(),
+  unique(user_id)
+);
+
+create index if not exists idx_email_sequence_user on email_sequence(user_id);
+
+-- Trigger : créer automatiquement une ligne email_sequence à chaque inscription
+create or replace function create_email_sequence()
+returns trigger as $$
+begin
+  insert into email_sequence (user_id) values (new.id)
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger on_user_created_email_sequence
+  after insert on users
+  for each row execute function create_email_sequence();
