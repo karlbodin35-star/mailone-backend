@@ -119,6 +119,7 @@ app.use('/api/stripe',   apiLimiter,  require('./routes/stripe'));
 app.use('/api/ai',       aiLimiter,   require('./routes/ai'));
 app.use('/api/referral', apiLimiter,  require('./routes/referral'));
 app.use('/api/team',     apiLimiter,  require('./routes/team'));
+app.use('/api/support',  apiLimiter,  require('./routes/support'));
 app.use('/api/cron',    require('./routes/cron'));     // Cron jobs — sécurisé par CRON_SECRET
 
 // ── 404 ───────────────────────────────────────────────────────
