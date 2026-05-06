@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const supabase = require('../lib/supabase');
 const { generateToken, requireAuth } = require('../lib/auth');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../lib/emails');
+const { purgeUserData } = require('../lib/security');
 
 // ── INSCRIPTION ──────────────────────────────────────────────
 router.post('/register', async (req, res) => {
@@ -380,13 +381,10 @@ router.delete('/me', requireAuth, async (req, res) => {
       await stripe.subscriptions.cancel(sub.stripe_subscription_id);
     }
 
-    // Désactiver le compte (suppression réelle sous 30j via cron)
-    await supabase
-      .from('users')
-      .update({ is_active: false })
-      .eq('id', req.user.id);
+    // Suppression immédiate et définitive — aucune donnée résiduelle
+    await purgeUserData(req.user.id);
 
-    res.json({ success: true, message: 'Compte supprimé. Données effacées sous 30 jours.' });
+    res.json({ success: true, message: 'Compte et données supprimés définitivement.' });
 
   } catch (err) {
     console.error('Delete account error:', err);

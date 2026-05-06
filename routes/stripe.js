@@ -9,6 +9,7 @@ const {
   sendCancellationEmail,
   sendReferralRewardEmail,
 } = require('../lib/emails');
+const { purgeUserData } = require('../lib/security');
 
 // ── PRICE IDS MAP ────────────────────────────────────────────
 const PRICE_MAP = {
@@ -226,20 +227,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         break;
       }
 
-      // ── ABONNEMENT ANNULÉ ────────────────────────────────
+      // ── ABONNEMENT ANNULÉ — PURGE TOTALE RGPD ───────────
       case 'customer.subscription.deleted': {
         const subscription = event.data.object;
         const userId = subscription.metadata?.userId;
         if (!userId) break;
 
-        await supabase
-          .from('subscriptions')
-          .update({
-            status: 'canceled',
-            cancel_at_period_end: false,
-          })
-          .eq('stripe_subscription_id', subscription.id);
-
+        // Récupérer les infos avant purge pour envoyer l'email
         const { data: user } = await supabase
           .from('users')
           .select('email, first_name')
@@ -253,6 +247,9 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             accessEnd: new Date(subscription.current_period_end * 1000),
           });
         }
+
+        // Suppression immédiate et définitive — aucune donnée résiduelle
+        await purgeUserData(userId);
         break;
       }
 

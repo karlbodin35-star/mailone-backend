@@ -12,7 +12,37 @@ const rateLimit = require('express-rate-limit');
 const app = express();
 
 // ── SÉCURITÉ ─────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:     ["'self'"],
+      scriptSrc:      ["'self'"],
+      styleSrc:       ["'self'", "'unsafe-inline'"],
+      imgSrc:         ["'self'", 'data:', 'https:'],
+      connectSrc:     ["'self'"],
+      fontSrc:        ["'self'"],
+      objectSrc:      ["'none'"],
+      mediaSrc:       ["'none'"],
+      frameSrc:       ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  xssFilter: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+
+// Headers de sécurité supplémentaires non couverts par Helmet
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  next();
+});
 
 // CORS — autoriser votre frontend
 const allowedOrigins = [
