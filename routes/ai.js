@@ -213,4 +213,91 @@ Réponds UNIQUEMENT avec le JSON, sans explication.`
   }
 });
 
+// ── ASSISTANTE IA — CHAT BOÎTE MAIL ──────────────────────────
+router.post('/chat', requireAuth, requireSubscription, async (req, res) => {
+  try {
+    const { message, history = [], mailsContext = [], userName = '' } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message requis.' });
+
+    const plan = req.subscription?.plan || 'solo';
+    const quotaCheck = await checkAndIncrementQuota(req.user.id, plan);
+    if (!quotaCheck.allowed) {
+      return res.status(429).json({
+        error: 'Quota mensuel atteint',
+        code: 'QUOTA_EXCEEDED',
+        message: `Quota de ${quotaCheck.quota} réponses atteint. Réinitialisé le ${quotaCheck.resetDate}.`,
+      });
+    }
+
+    // Construire le contexte boîte mail
+    const mailboxCtx = mailsContext.length > 0
+      ? mailsContext.map((m, i) =>
+          `[${i+1}] De: ${m.sender} <${m.email || '?'}> | ${m.date || ''} ${m.time || ''} | Sujet: "${m.subject}" | Catégorie: ${m.cat} | Résumé: ${m.summary}${m.follow ? ' | ⚠️ RELANCE EN ATTENTE' : ''}`
+        ).join('\n')
+      : 'Aucun email chargé (boîte vide ou non connectée).';
+
+    const systemPrompt = `Tu es l'Assistante MailOne Pro, l'IA personnelle de ${userName || req.user.first_name} intégrée à sa boîte mail professionnelle.
+
+BOÎTE MAIL ACTUELLE (${mailsContext.length} emails chargés) :
+${mailboxCtx}
+
+TES CAPACITÉS :
+- Répondre à des questions précises sur les emails ("est-ce que j'ai envoyé la facture à M. X ?", "qui attend une réponse ?")
+- Résumer les derniers échanges avec un client spécifique
+- Identifier les urgences, relances en attente, devis non répondus
+- Donner des conseils d'action concrets et priorisés
+- Analyser les patterns de la boîte mail
+
+RÈGLES ABSOLUES :
+- Ne mentionne JAMAIS Claude, Anthropic, GPT, OpenAI
+- Si on demande qui tu es : "Je suis l'Assistante MailOne Pro"
+- Réponds en français naturel et conversationnel
+- Cite les noms, dates et détails précis des emails quand pertinent
+- Sois directe et utile — pas de blabla
+- Si un email correspondant n'est pas dans la liste, dis-le clairement`;
+
+    // Construire l'historique de conversation
+    const messages = [
+      ...history.map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: message },
+    ];
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        stream: true,
+        system: systemPrompt,
+        messages,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Quota-Remaining', quotaCheck.quota - quotaCheck.count);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value));
+    }
+    res.end();
+
+  } catch (err) {
+    console.error('AI chat error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la conversation.' });
+  }
+});
+
 module.exports = router;
