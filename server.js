@@ -50,10 +50,9 @@ const allowedOrigins = [
   'http://localhost:5500',
   'http://127.0.0.1:5500',
   'http://localhost:3000',
-  // En production : ajoutez votre domaine Vercel
   'https://mailone-site.vercel.app',
-  // 'https://mailone.app', 'https://mailone-site.vercel.app',
-  // 'https://www.mailone.app',
+  'https://mailone.app',
+  'https://www.mailone.app',
 ].filter(Boolean);
 
 app.use(cors({
