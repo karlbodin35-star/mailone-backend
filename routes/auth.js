@@ -124,6 +124,54 @@ router.post('/register', async (req, res) => {
       current_period_end: trialEnd,
     });
 
+    // ── Traiter l'invitation d'équipe si présente ──
+    const { inviteToken } = req.body;
+    if (inviteToken) {
+      const { data: invite } = await supabase
+        .from('team_members')
+        .select('id, team_id, invited_email, teams(max_seats)')
+        .eq('invite_token', inviteToken)
+        .eq('status', 'invited')
+        .single();
+
+      if (invite && invite.invited_email === email.toLowerCase()) {
+        // Vérifier qu'il reste un siège
+        const { count } = await supabase
+          .from('team_members')
+          .select('id', { count: 'exact', head: true })
+          .eq('team_id', invite.team_id)
+          .eq('status', 'active');
+
+        if ((count || 0) < (invite.teams?.max_seats || 1)) {
+          await supabase
+            .from('team_members')
+            .update({ user_id: user.id, status: 'active', joined_at: new Date().toISOString(), invite_token: null })
+            .eq('id', invite.id);
+        }
+      }
+    }
+
+    // ── Créer automatiquement l'équipe pour les plans team/enterprise ──
+    if ((plan === 'team' || plan === 'enterprise') && !inviteToken) {
+      const PLAN_SEATS = { team: 10, enterprise: 50 };
+      const maxSeats = PLAN_SEATS[plan] || 10;
+      const { data: team } = await supabase
+        .from('teams')
+        .insert({ owner_id: user.id, name: `Équipe de ${firstName}`, max_seats: maxSeats })
+        .select()
+        .single();
+
+      if (team) {
+        await supabase.from('team_members').insert({
+          team_id: team.id,
+          user_id: user.id,
+          role: 'owner',
+          status: 'active',
+          joined_at: new Date().toISOString(),
+        });
+      }
+    }
+
     // Envoyer l'email de bienvenue
     try {
       await sendWelcomeEmail({
