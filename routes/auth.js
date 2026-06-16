@@ -69,53 +69,13 @@ router.post('/register', async (req, res) => {
       }
     }
 
-    // Créer le client Stripe + session de paiement
-    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    // Essai 14 jours — pas de paiement à l'inscription, Stripe intervient après le trial
+    const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Créer le customer Stripe
-    const customer = await stripe.customers.create({
-      email: email.toLowerCase(),
-      name: `${firstName} ${lastName || ''}`.trim(),
-      metadata: {
-        userId: user.id,
-        plan: plan || 'solo',
-      },
-    });
-
-    // Mapper plan + billing → Price ID
-    const priceMap = {
-      'solo_monthly':       process.env.STRIPE_PRICE_SOLO_MONTHLY,
-      'solo_annual':        process.env.STRIPE_PRICE_SOLO_ANNUAL,
-      'team_monthly':       process.env.STRIPE_PRICE_TEAM_MONTHLY,
-      'team_annual':        process.env.STRIPE_PRICE_TEAM_ANNUAL,
-      'enterprise_monthly': process.env.STRIPE_PRICE_ENT_MONTHLY,
-      'enterprise_annual':  process.env.STRIPE_PRICE_ENT_ANNUAL,
-    };
-    const priceKey = `${plan || 'solo'}_${billing || 'monthly'}`;
-    const priceId = priceMap[priceKey];
-
-    // Créer l'abonnement avec trial 14j
-    let subscription = null;
-    if (priceId) {
-      subscription = await stripe.subscriptions.create({
-        customer: customer.id,
-        items: [{ price: priceId }],
-        trial_period_days: 14,
-        payment_behavior: 'default_incomplete',
-        expand: ['latest_invoice.payment_intent'],
-        metadata: { userId: user.id, plan: plan || 'solo' },
-      });
-    }
-
-    // Sauvegarder l'abonnement en base
-    const trialEnd = subscription?.trial_end
-      ? new Date(subscription.trial_end * 1000).toISOString()
-      : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-
-    await supabase.from('subscriptions').insert({
+    const { error: subError } = await supabase.from('subscriptions').insert({
       user_id: user.id,
-      stripe_customer_id: customer.id,
-      stripe_subscription_id: subscription?.id || null,
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
       plan: plan || 'solo',
       billing: billing || 'monthly',
       status: 'trialing',
@@ -123,6 +83,7 @@ router.post('/register', async (req, res) => {
       current_period_start: new Date().toISOString(),
       current_period_end: trialEnd,
     });
+    if (subError) console.error('Subscription insert error:', subError.message);
 
     // ── Traiter l'invitation d'équipe si présente ──
     const { inviteToken } = req.body;
@@ -153,22 +114,29 @@ router.post('/register', async (req, res) => {
 
     // ── Créer automatiquement l'équipe pour les plans team/enterprise ──
     if ((plan === 'team' || plan === 'enterprise') && !inviteToken) {
-      const PLAN_SEATS = { team: 10, enterprise: 50 };
-      const maxSeats = PLAN_SEATS[plan] || 10;
-      const { data: team } = await supabase
-        .from('teams')
-        .insert({ owner_id: user.id, name: `Équipe de ${firstName}`, max_seats: maxSeats })
-        .select()
-        .single();
+      try {
+        const PLAN_SEATS = { team: 10, enterprise: 50 };
+        const maxSeats = PLAN_SEATS[plan] || 10;
+        const { data: team, error: teamError } = await supabase
+          .from('teams')
+          .insert({ owner_id: user.id, name: `Équipe de ${firstName}`, max_seats: maxSeats })
+          .select()
+          .single();
 
-      if (team) {
-        await supabase.from('team_members').insert({
-          team_id: team.id,
-          user_id: user.id,
-          role: 'owner',
-          status: 'active',
-          joined_at: new Date().toISOString(),
-        });
+        if (teamError) console.error('Team insert error:', teamError.message);
+
+        if (team) {
+          const { error: memberError } = await supabase.from('team_members').insert({
+            team_id: team.id,
+            user_id: user.id,
+            role: 'owner',
+            status: 'active',
+            joined_at: new Date().toISOString(),
+          });
+          if (memberError) console.error('Team member insert error:', memberError.message);
+        }
+      } catch (teamErr) {
+        console.error('Team creation error:', teamErr.message);
       }
     }
 

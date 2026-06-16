@@ -23,7 +23,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "resend": "^2.1.0",
-    "stripe": "^14.11.0"
+    "stripe": "^14.11.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

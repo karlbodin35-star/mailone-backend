@@ -16,9 +16,8 @@
     "NODE_ENV": "production"
   },
   "crons": [
-    {
-      "path": "/api/cron/emails",
-      "schedule": "0 7 * * *"
-    }
+    { "path": "/api/cron/emails",                        "schedule": "0 7 * * *"  },
+    { "path": "/api/notifications/cron/morning",         "schedule": "0 7 * * *"  },
+    { "path": "/api/notifications/cron/afternoon",       "schedule": "0 14 * * *" }
   ]
 }

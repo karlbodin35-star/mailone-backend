@@ -1,16 +1,15 @@
-const express = require('express');
-const router = express.Router();
+// ══════════════════════════════════════════════════════════════
+// MAILONE — Agent IA Hybride
+// Priorité : agents locaux → Anthropic en dernier recours
+// Le quota ne se consomme QUE lors d'un appel Anthropic
+// ══════════════════════════════════════════════════════════════
+const express  = require('express');
+const router   = express.Router();
 const supabase = require('../lib/supabase');
 const { requireAuth, requireSubscription } = require('../lib/auth');
 
-// ── QUOTAS FAIR USE par plan ──────────────────────────────────
-const PLAN_QUOTAS = {
-  solo:       500,   // réponses IA/mois
-  team:       2000,
-  enterprise: 5000,
-};
+const PLAN_QUOTAS = { solo: 500, team: 2000, enterprise: 5000 };
 
-// ── SYSTÈME PROMPT WHITE-LABEL ────────────────────────────────
 const SYSTEM_PROMPT = `Tu es l'Agent MailOne Pro, le moteur d'intelligence artificielle intégré à l'application MailOne pour artisans et PME.
 
 RÈGLES ABSOLUES :
@@ -21,79 +20,288 @@ RÈGLES ABSOLUES :
 - Rédige toujours en français naturel, sans formatage markdown
 - Réponds en moins de 150 mots sauf si la complexité le justifie`;
 
-// ── VÉRIFIER ET INCRÉMENTER LE QUOTA ─────────────────────────
-async function checkAndIncrementQuota(userId, plan) {
-  const now = new Date();
-  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const quota = PLAN_QUOTAS[plan] || PLAN_QUOTAS.solo;
+// ════════════════════════════════════════════════════════════
+// UTILITAIRES
+// ════════════════════════════════════════════════════════════
 
-  // Chercher ou créer le compteur du mois
-  const { data: existing } = await supabase
-    .from('ai_usage')
-    .select('count')
-    .eq('user_id', userId)
-    .eq('month_key', monthKey)
-    .single();
+function normalize(str) {
+  return (str || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
 
-  const currentCount = existing?.count || 0;
+function extractFirstName(sender) {
+  if (!sender) return null;
+  const nameMatch = sender.match(/^([^<@\n]+?)(?:\s*<|\s*@|$)/);
+  if (!nameMatch) return null;
+  const parts = nameMatch[1].trim().split(/\s+/);
+  const first = parts[0];
+  if (!first || first.length < 2) return null;
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+}
 
-  // Quota dépassé ?
-  if (currentCount >= quota) {
+function extractAmounts(text) {
+  return (text.match(/\d[\d\s]*(?:[,.]\d+)?\s*(?:€|euros?)/gi) || []).map(m => m.trim());
+}
+
+function extractDates(text) {
+  const results = [];
+  const patterns = [
+    /(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\s+\d{1,2}(?:\s+\w+)?/gi,
+    /\d{1,2}\s+(?:janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)/gi,
+    /\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/g,
+  ];
+  for (const p of patterns) {
+    const found = normalize(text).match(p) || [];
+    results.push(...found);
+  }
+  return results;
+}
+
+// ════════════════════════════════════════════════════════════
+// AGENT LOCAL — GÉNÉRATION DE RÉPONSE EMAIL
+// ════════════════════════════════════════════════════════════
+
+function localGenerateReply(mailContent, sender, subject, mailCategory) {
+  const firstName = extractFirstName(sender);
+  const salut     = firstName ? `Bonjour ${firstName},` : 'Bonjour,';
+  const amounts   = extractAmounts((mailContent || '') + ' ' + (subject || ''));
+  const dates     = extractDates((mailContent || '') + ' ' + (subject || ''));
+  const sign      = '\n\nCordialement,';
+
+  const cleanSubject = (subject || '')
+    .replace(/^(re:|fwd:|tr:|aw:|devis|demande de)\s*/i, '')
+    .trim();
+
+  const templates = {
+    urgent: `${salut}\n\nJ'ai bien pris connaissance de votre message et mesure l'urgence de la situation. Je me mobilise immédiatement.\n\nPourriez-vous me confirmer votre adresse exacte et vos disponibilités ? Je reviens vers vous dans les plus brefs délais.${sign}`,
+
+    quote: `${salut}\n\nJe vous remercie pour votre demande${cleanSubject ? ` concernant "${cleanSubject}"` : ''}. Afin de vous établir un devis précis et adapté, je souhaiterais convenir d'une visite technique.\n\nSeriez-vous disponible cette semaine ou la semaine prochaine ? Je m'adapte à vos contraintes.${sign}`,
+
+    appt: `${salut}\n\n${dates.length > 0
+      ? `Je confirme notre rendez-vous du ${dates[0]}. Ce créneau me convient parfaitement.`
+      : 'Je prends note de votre demande de rendez-vous et suis disponible pour convenir d\'un créneau.'
+    }\n\nPourriez-vous me confirmer votre adresse exacte et un numéro de téléphone pour vous prévenir si besoin ?${sign}`,
+
+    invoice: `${salut}\n\nSuite à notre intervention${amounts.length > 0 ? ` d'un montant de ${amounts[0]}` : ''}, vous trouverez ci-dessous mes coordonnées bancaires :\n\nIBAN : [VOTRE IBAN]\nBIC : [VOTRE BIC]\nLibellé : [RÉFÉRENCE]\n\nN'hésitez pas à me contacter pour toute question.${sign}`,
+  };
+
+  const reply = templates[mailCategory] || templates.quote;
+  // Confiance élevée pour les catégories connues, basse sinon
+  const confident = !!templates[mailCategory];
+  return { reply, confident };
+}
+
+// ════════════════════════════════════════════════════════════
+// AGENT LOCAL — ANALYSE EMAIL
+// ════════════════════════════════════════════════════════════
+
+function localAnalyze(mailContent, subject) {
+  const text = normalize((subject || '') + ' ' + (mailContent || ''));
+
+  const scores = {
+    urgent:  ['urgent', 'urgence', 'immediatement', 'vite', 'panne', 'fuite', 'casse', 'asap', 'sos'].filter(w => text.includes(w)).length,
+    quote:   ['devis', 'tarif', 'prix', 'combien', 'estimation', 'cout', 'budget', 'offre'].filter(w => text.includes(w)).length,
+    appt:    ['rendez-vous', 'rdv', 'disponible', 'creneau', 'planning', 'agenda', 'quand', 'horaire'].filter(w => text.includes(w)).length,
+    invoice: ['facture', 'paiement', 'reglement', 'virement', 'iban', 'bic', 'solde', 'regle'].filter(w => text.includes(w)).length,
+  };
+
+  let category = 'quote';
+  let maxScore = 0;
+  for (const [cat, s] of Object.entries(scores)) {
+    if (s > maxScore) { maxScore = s; category = cat; }
+  }
+
+  const priority  = category === 'urgent' ? 'critical' : scores.urgent > 0 ? 'high' : 'medium';
+  const urgency   = category === 'urgent' ? 'immediate' : category === 'appt' ? '48h' : 'week';
+  const hasFollow = text.includes('relance') || text.includes('suite a') || text.includes('toujours pas');
+  const summary   = (subject || mailContent || '').slice(0, 80).trim();
+
+  return { category, priority, summary, urgency, sentiment: scores.urgent > 0 ? 'negative' : 'neutral', hasFollowUp: hasFollow, hasCompetitor: false, amount: null };
+}
+
+// ════════════════════════════════════════════════════════════
+// AGENT LOCAL — CHAT BOÎTE MAIL
+// ════════════════════════════════════════════════════════════
+
+function localChat(message, mailsContext) {
+  const msg = normalize(message);
+  const mails = mailsContext || [];
+
+  // Résumé global
+  if (/\b(resume|recapitulatif|apercu|situation|boite|bilan|vue)\b/.test(msg)) {
+    const cats = { urgent: 0, quote: 0, appt: 0, invoice: 0 };
+    mails.forEach(m => { if (cats[m.cat] !== undefined) cats[m.cat]++; });
+    const followCount = mails.filter(m => m.follow || m.hasFollowUp).length;
     return {
-      allowed: false,
-      count: currentCount,
-      quota,
-      resetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('fr-FR'),
+      reply: `Résumé de votre boîte (${mails.length} emails) :\n\n• ${cats.urgent} urgence${cats.urgent !== 1 ? 's' : ''}\n• ${cats.quote} devis\n• ${cats.appt} rendez-vous\n• ${cats.invoice} facture${cats.invoice !== 1 ? 's' : ''}\n• ${followCount} relance${followCount !== 1 ? 's' : ''} en attente`,
+      confident: true,
     };
   }
 
-  // Incrémenter
-  if (existing) {
-    await supabase
-      .from('ai_usage')
-      .update({ count: currentCount + 1, updated_at: now.toISOString() })
-      .eq('user_id', userId)
-      .eq('month_key', monthKey);
-  } else {
-    await supabase
-      .from('ai_usage')
-      .insert({ user_id: userId, month_key: monthKey, count: 1 });
+  // Relances
+  if (/\b(relance|attente|attend|pas repondu|sans reponse)\b/.test(msg)) {
+    const list = mails.filter(m => m.follow || m.hasFollowUp);
+    if (list.length === 0) return { reply: 'Aucune relance en attente. Vous êtes à jour !', confident: true };
+    const items = list.slice(0, 5).map(m => `• ${m.sender} — "${m.subject}"`).join('\n');
+    return { reply: `${list.length} relance${list.length !== 1 ? 's' : ''} en attente :\n\n${items}${list.length > 5 ? `\n…et ${list.length - 5} autres.` : ''}`, confident: true };
   }
 
+  // Urgences
+  if (/\b(urgent|urgence|priorite|critique|important)\b/.test(msg)) {
+    const list = mails.filter(m => m.cat === 'urgent');
+    if (list.length === 0) return { reply: 'Aucune urgence en ce moment. Bonne nouvelle !', confident: true };
+    const items = list.slice(0, 5).map(m => `• ${m.sender} — "${m.subject}"`).join('\n');
+    return { reply: `${list.length} urgence${list.length !== 1 ? 's' : ''} :\n\n${items}`, confident: true };
+  }
+
+  // Devis
+  if (/\b(devis|demande de prix|estimation)\b/.test(msg)) {
+    const list = mails.filter(m => m.cat === 'quote');
+    if (list.length === 0) return { reply: 'Aucune demande de devis en attente.', confident: true };
+    const items = list.slice(0, 5).map(m => `• ${m.sender} — "${m.subject}"`).join('\n');
+    return { reply: `${list.length} demande${list.length !== 1 ? 's' : ''} de devis :\n\n${items}`, confident: true };
+  }
+
+  // Factures
+  if (/\b(facture|paiement|virement|reglement)\b/.test(msg)) {
+    const list = mails.filter(m => m.cat === 'invoice');
+    if (list.length === 0) return { reply: 'Aucune facture détectée dans votre boîte.', confident: true };
+    const items = list.slice(0, 5).map(m => `• ${m.sender} — "${m.subject}"`).join('\n');
+    return { reply: `${list.length} email${list.length !== 1 ? 's' : ''} facture :\n\n${items}`, confident: true };
+  }
+
+  // Comptage général
+  if (/\b(combien|nombre|total|count)\b/.test(msg)) {
+    return { reply: `Votre boîte contient actuellement ${mails.length} email${mails.length !== 1 ? 's' : ''} chargé${mails.length !== 1 ? 's' : ''}.`, confident: true };
+  }
+
+  // Recherche par expéditeur
+  const senderMatch = msg.match(/\b(?:de|avec|par|depuis|envoye par)\s+([a-z]{3,}(?:\s+[a-z]{3,})?)/);
+  if (senderMatch) {
+    const query = senderMatch[1];
+    const found = mails.filter(m =>
+      normalize(m.sender || '').includes(query) ||
+      normalize(m.senderEmail || '').includes(query)
+    );
+    if (found.length > 0) {
+      const items = found.slice(0, 5).map(m => `• "${m.subject}" (${m.date || 'date inconnue'})`).join('\n');
+      return { reply: `${found.length} email${found.length !== 1 ? 's' : ''} de ${found[0].sender} :\n\n${items}`, confident: true };
+    }
+    if (mails.length > 0) return { reply: `Je n'ai pas trouvé d'email de "${senderMatch[1]}" dans votre boîte.`, confident: true };
+  }
+
+  // Dernier email
+  if (/\b(dernier|dernier email|plus recent|recent)\b/.test(msg)) {
+    if (mails.length === 0) return { reply: 'Votre boîte est vide ou non synchronisée.', confident: true };
+    const last = mails[0];
+    return { reply: `Dernier email reçu : "${last.subject}" de ${last.sender}${last.date ? ` le ${last.date}` : ''}.`, confident: true };
+  }
+
+  // Pas confiant → fallback Anthropic
+  return { reply: null, confident: false };
+}
+
+// ════════════════════════════════════════════════════════════
+// QUOTA — seulement consommé lors d'un appel Anthropic
+// ════════════════════════════════════════════════════════════
+
+async function checkAndIncrementQuota(userId, plan) {
+  const now      = new Date();
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const quota    = PLAN_QUOTAS[plan] || PLAN_QUOTAS.solo;
+
+  const { data: existing } = await supabase
+    .from('ai_usage').select('count')
+    .eq('user_id', userId).eq('month_key', monthKey).single();
+
+  const currentCount = existing?.count || 0;
+  if (currentCount >= quota) {
+    return { allowed: false, count: currentCount, quota, resetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('fr-FR') };
+  }
+
+  if (existing) {
+    await supabase.from('ai_usage').update({ count: currentCount + 1, updated_at: now.toISOString() }).eq('user_id', userId).eq('month_key', monthKey);
+  } else {
+    await supabase.from('ai_usage').insert({ user_id: userId, month_key: monthKey, count: 1 });
+  }
   return { allowed: true, count: currentCount + 1, quota };
 }
 
-// ── OPTION 2 : COMPTEUR VISIBLE DANS L'APP ───────────────────
+// SSE pour réponse locale (format compatible frontend)
+function sendLocalSSE(res, text, extra = {}) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Source', 'local');
+  Object.entries(extra).forEach(([k, v]) => res.setHeader(k, v));
+  res.write(`data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text } })}\n\n`);
+  res.write('data: {"type":"message_stop"}\n\n');
+  res.end();
+}
+
+// Appel Anthropic streaming (fallback)
+async function callAnthropic(res, systemPrompt, messages, maxTokens = 600, quotaHeaders = {}) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      stream: true,
+      system: systemPrompt,
+      messages,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Anthropic ${response.status}`);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Source', 'anthropic');
+  Object.entries(quotaHeaders).forEach(([k, v]) => res.setHeader(k, v));
+
+  const reader  = response.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    res.write(decoder.decode(value));
+  }
+  res.end();
+}
+
+// ════════════════════════════════════════════════════════════
+// ROUTES
+// ════════════════════════════════════════════════════════════
+
+// ── GET /api/ai/usage ─────────────────────────────────────────
 router.get('/usage', requireAuth, requireSubscription, async (req, res) => {
-  const now = new Date();
+  const now      = new Date();
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const plan = req.subscription?.plan || 'solo';
-  const quota = PLAN_QUOTAS[plan] || PLAN_QUOTAS.solo;
+  const plan     = req.subscription?.plan || 'solo';
+  const quota    = PLAN_QUOTAS[plan] || PLAN_QUOTAS.solo;
 
-  const { data } = await supabase
-    .from('ai_usage')
-    .select('count')
-    .eq('user_id', req.user.id)
-    .eq('month_key', monthKey)
-    .single();
-
-  const used = data?.count || 0;
+  const { data } = await supabase.from('ai_usage').select('count').eq('user_id', req.user.id).eq('month_key', monthKey).single();
+  const used      = data?.count || 0;
   const remaining = Math.max(0, quota - used);
-  const pct = Math.round(used / quota * 100);
+  const pct       = Math.round(used / quota * 100);
 
   res.json({
-    used,
-    quota,
-    remaining,
-    pct,
-    plan,
-    // Alerte si > 80% consommé
-    alert: pct >= 80 ? `Vous avez utilisé ${pct}% de votre quota mensuel (${used}/${quota} réponses).` : null,
+    used, quota, remaining, pct, plan,
+    alert: pct >= 80 ? `Vous avez utilisé ${pct}% de votre quota mensuel (${used}/${quota} réponses IA).` : null,
     resetDate: new Date(now.getFullYear(), now.getMonth() + 1, 1).toLocaleDateString('fr-FR'),
+    note: 'Les réponses générées localement ne consomment pas de quota.',
   });
 });
 
-// ── GÉNÉRER UNE RÉPONSE IA ────────────────────────────────────
+// ── POST /api/ai/generate-reply ───────────────────────────────
 router.post('/generate-reply', requireAuth, requireSubscription, async (req, res) => {
   try {
     const { mailContent, sender, subject, mailCategory } = req.body;
@@ -101,17 +309,17 @@ router.post('/generate-reply', requireAuth, requireSubscription, async (req, res
 
     const plan = req.subscription?.plan || 'solo';
 
-    // ── OPTION 1 : VÉRIFICATION DU QUOTA ──
+    // 1. Agent local
+    const local = localGenerateReply(mailContent, sender, subject, mailCategory);
+    if (local.confident) {
+      return sendLocalSSE(res, local.reply);
+    }
+
+    // 2. Anthropic en fallback (quota consommé seulement ici)
     const quotaCheck = await checkAndIncrementQuota(req.user.id, plan);
     if (!quotaCheck.allowed) {
-      return res.status(429).json({
-        error: 'Quota mensuel atteint',
-        code: 'QUOTA_EXCEEDED',
-        message: `Vous avez atteint votre quota de ${quotaCheck.quota} réponses IA ce mois. L'agent local reste disponible sans limite. Quota réinitialisé le ${quotaCheck.resetDate}.`,
-        quota: quotaCheck.quota,
-        resetDate: quotaCheck.resetDate,
-        fallback: 'local_agent', // indique au frontend de basculer sur l'agent local
-      });
+      // Quota épuisé → on renvoie quand même la réponse locale
+      return sendLocalSSE(res, local.reply);
     }
 
     const catInstr = {
@@ -121,181 +329,91 @@ router.post('/generate-reply', requireAuth, requireSubscription, async (req, res
       invoice: 'Fournis les coordonnées bancaires professionnellement. Utilise : [VOTRE IBAN], [VOTRE BIC].',
     };
 
-    const userPrompt = `${catInstr[mailCategory] || catInstr.quote}
-
-Mail reçu de ${sender || 'un client'} :
-Sujet : ${subject || 'Sans objet'}
-
-${mailContent}`;
-
-    // Appel API Anthropic avec streaming
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 600,
-        stream: true,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-    });
-
-    if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
-
-    // Headers SSE
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    // Envoyer le quota restant dans les headers
-    res.setHeader('X-Quota-Used', quotaCheck.count);
-    res.setHeader('X-Quota-Total', quotaCheck.quota);
-    res.setHeader('X-Quota-Remaining', quotaCheck.quota - quotaCheck.count);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value));
+    try {
+      await callAnthropic(res, SYSTEM_PROMPT, [{
+        role: 'user',
+        content: `${catInstr[mailCategory] || catInstr.quote}\n\nMail reçu de ${sender || 'un client'} :\nSujet : ${subject || 'Sans objet'}\n\n${mailContent}`,
+      }], 600, {
+        'X-Quota-Used': quotaCheck.count,
+        'X-Quota-Total': quotaCheck.quota,
+        'X-Quota-Remaining': quotaCheck.quota - quotaCheck.count,
+      });
+    } catch (anthropicErr) {
+      console.error('Anthropic fallback failed, using local:', anthropicErr.message);
+      if (!res.headersSent) sendLocalSSE(res, local.reply);
     }
-    res.end();
 
   } catch (err) {
-    console.error('AI generate error:', err);
+    console.error('generate-reply error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la génération.' });
   }
 });
 
-// ── ANALYSER UN MAIL ──────────────────────────────────────────
-// L'analyse ne consomme PAS de quota (c'est léger et automatique)
+// ── POST /api/ai/analyze ──────────────────────────────────────
+// N'utilise PAS Anthropic — toujours local
 router.post('/analyze', requireAuth, requireSubscription, async (req, res) => {
   try {
     const { mailContent, subject } = req.body;
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 300,
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: 'user',
-          content: `Analyse ce mail en JSON avec exactement ces champs :
-{"category":"urgent|quote|appt|invoice","priority":"critical|high|medium|low","summary":"résumé 1 ligne max 80 chars","urgency":"immediate|today|48h|week|none","sentiment":"positive|neutral|negative","hasFollowUp":true/false,"hasCompetitor":true/false,"amount":null}
-
-Sujet : ${subject || 'Sans objet'}
-Contenu : ${mailContent}
-
-Réponds UNIQUEMENT avec le JSON, sans explication.`
-        }]
-      }),
-    });
-    const data = await response.json();
-    const text = data.content?.[0]?.text || '{}';
-    try {
-      const analysis = JSON.parse(text.replace(/```json|```/g, '').trim());
-      res.json({ analysis });
-    } catch {
-      res.json({ analysis: { category: 'quote', priority: 'medium', summary: subject || 'Mail reçu' } });
-    }
+    const analysis = localAnalyze(mailContent, subject);
+    res.json({ analysis, source: 'local' });
   } catch (err) {
-    console.error('AI analyze error:', err);
+    console.error('analyze error:', err.message);
     res.status(500).json({ error: 'Erreur lors de l\'analyse.' });
   }
 });
 
-// ── ASSISTANTE IA — CHAT BOÎTE MAIL ──────────────────────────
+// ── POST /api/ai/chat ─────────────────────────────────────────
 router.post('/chat', requireAuth, requireSubscription, async (req, res) => {
   try {
     const { message, history = [], mailsContext = [], userName = '' } = req.body;
     if (!message) return res.status(400).json({ error: 'Message requis.' });
 
     const plan = req.subscription?.plan || 'solo';
+
+    // 1. Agent local
+    const local = localChat(message, mailsContext);
+    if (local.confident) {
+      return sendLocalSSE(res, local.reply);
+    }
+
+    // 2. Anthropic en fallback
     const quotaCheck = await checkAndIncrementQuota(req.user.id, plan);
     if (!quotaCheck.allowed) {
-      return res.status(429).json({
-        error: 'Quota mensuel atteint',
-        code: 'QUOTA_EXCEEDED',
-        message: `Quota de ${quotaCheck.quota} réponses atteint. Réinitialisé le ${quotaCheck.resetDate}.`,
-      });
+      return sendLocalSSE(res, `Je ne suis pas en mesure de répondre précisément à cette question. Votre quota mensuel de ${quotaCheck.quota} réponses IA est atteint.\n\nPour les questions simples sur votre boîte, je reste disponible sans limite.`);
     }
 
-    // Construire le contexte boîte mail
     const mailboxCtx = mailsContext.length > 0
-      ? mailsContext.map((m, i) =>
-          `[${i+1}] De: ${m.sender} <${m.email || '?'}> | ${m.date || ''} ${m.time || ''} | Sujet: "${m.subject}" | Catégorie: ${m.cat} | Résumé: ${m.summary}${m.follow ? ' | ⚠️ RELANCE EN ATTENTE' : ''}`
-        ).join('\n')
-      : 'Aucun email chargé (boîte vide ou non connectée).';
+      ? mailsContext.map((m, i) => `[${i + 1}] De: ${m.sender} | Sujet: "${m.subject}" | Catégorie: ${m.cat}${m.follow ? ' | ⚠️ RELANCE' : ''}`).join('\n')
+      : 'Boîte vide ou non synchronisée.';
 
-    const systemPrompt = `Tu es l'Assistante MailOne Pro, l'IA personnelle de ${userName || req.user.first_name} intégrée à sa boîte mail professionnelle.
+    const systemPrompt = `Tu es l'Assistante MailOne Pro, l'IA personnelle de ${userName || 'l\'utilisateur'} intégrée à sa boîte mail professionnelle.
 
-BOÎTE MAIL ACTUELLE (${mailsContext.length} emails chargés) :
+BOÎTE MAIL (${mailsContext.length} emails) :
 ${mailboxCtx}
 
-TES CAPACITÉS :
-- Répondre à des questions précises sur les emails ("est-ce que j'ai envoyé la facture à M. X ?", "qui attend une réponse ?")
-- Résumer les derniers échanges avec un client spécifique
-- Identifier les urgences, relances en attente, devis non répondus
-- Donner des conseils d'action concrets et priorisés
-- Analyser les patterns de la boîte mail
-
-RÈGLES ABSOLUES :
+RÈGLES :
 - Ne mentionne JAMAIS Claude, Anthropic, GPT, OpenAI
 - Si on demande qui tu es : "Je suis l'Assistante MailOne Pro"
-- Réponds en français naturel et conversationnel
-- Cite les noms, dates et détails précis des emails quand pertinent
-- Sois directe et utile — pas de blabla
-- Si un email correspondant n'est pas dans la liste, dis-le clairement`;
+- Réponds en français naturel et concis
+- Cite les noms et détails précis des emails quand pertinent
+- Sois directe et utile`;
 
-    // Construire l'historique de conversation
-    const messages = [
-      ...history.map(h => ({ role: h.role, content: h.content })),
-      { role: 'user', content: message },
-    ];
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        stream: true,
-        system: systemPrompt,
-        messages,
-      }),
-    });
-
-    if (!response.ok) throw new Error(`Anthropic API error: ${response.status}`);
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Quota-Remaining', quotaCheck.quota - quotaCheck.count);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value));
+    try {
+      await callAnthropic(res, systemPrompt, [
+        ...history.map(h => ({ role: h.role, content: h.content })),
+        { role: 'user', content: message },
+      ], 1024, {
+        'X-Quota-Remaining': quotaCheck.quota - quotaCheck.count,
+      });
+    } catch (anthropicErr) {
+      console.error('Anthropic chat fallback failed:', anthropicErr.message);
+      if (!res.headersSent) {
+        sendLocalSSE(res, `Je ne peux pas répondre précisément à cette question pour le moment. Essayez de reformuler ou posez-moi une question sur vos urgences, devis, relances ou rendez-vous.`);
+      }
     }
-    res.end();
 
   } catch (err) {
-    console.error('AI chat error:', err);
+    console.error('AI chat error:', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la conversation.' });
   }
 });

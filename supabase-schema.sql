@@ -114,6 +114,48 @@ create trigger update_subscriptions_updated_at
   before update on subscriptions
   for each row execute function update_updated_at();
 
+-- ── TABLE TEAMS ──────────────────────────────────────────────
+create table if not exists teams (
+  id         uuid primary key default uuid_generate_v4(),
+  owner_id   uuid references users(id) on delete cascade,
+  name       text not null,
+  max_seats  int default 10,
+  created_at timestamptz default now()
+);
+
+-- ── TABLE TEAM_MEMBERS ────────────────────────────────────────
+create table if not exists team_members (
+  id             uuid primary key default uuid_generate_v4(),
+  team_id        uuid references teams(id) on delete cascade,
+  user_id        uuid references users(id) on delete set null,
+  role           text check (role in ('owner','admin','member')) default 'member',
+  status         text check (status in ('invited','active','suspended')) default 'invited',
+  invited_email  text,
+  invite_token   text unique,
+  joined_at      timestamptz,
+  created_at     timestamptz default now()
+);
+
+-- ── TABLE PUSH_SUBSCRIPTIONS ──────────────────────────────────
+create table if not exists push_subscriptions (
+  id         uuid primary key default uuid_generate_v4(),
+  user_id    uuid references users(id) on delete cascade,
+  endpoint   text unique not null,
+  p256dh     text,
+  auth       text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_team_members_team on team_members(team_id);
+create index if not exists idx_team_members_user on team_members(user_id);
+create index if not exists idx_push_subs_user on push_subscriptions(user_id);
+
+-- ── COLONNES MANQUANTES SUR USERS ────────────────────────────
+-- À exécuter si la table users existait déjà sans ces colonnes
+alter table users add column if not exists reset_token          text;
+alter table users add column if not exists reset_token_expires  timestamptz;
+alter table users add column if not exists avatar_url           text;
+
 -- ══════════════════════════════════════════════════════════════
 -- ✅ Schéma créé avec succès
 -- Prochaine étape : déployez le backend et configurez les variables .env
