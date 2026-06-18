@@ -481,7 +481,8 @@ Format JSON requis (respecte exactement ces valeurs possibles) :
 });
 
 // ── POST /api/ai/demo-reply ───────────────────────────────────
-// Public (no auth) — streaming reply for the demo page
+// Public (no auth) — generates reply JSON for the demo page
+// Non-streaming to avoid Vercel SSE constraints; frontend simulates typing
 router.post('/demo-reply', async (req, res) => {
   try {
     const { metier, sender, subject, body, ton, categorie } = req.body;
@@ -494,10 +495,10 @@ router.post('/demo-reply', async (req, res) => {
     }[metier] || 'artisan';
 
     const catInstr = {
-      urgent:  'C\'est une URGENCE. Réponds de façon rassurante, mentionne ta disponibilité immédiate.',
-      devis:   'C\'est une demande de DEVIS. Réponds commercialement, propose une visite technique.',
-      rdv:     'C\'est une demande de RDV. Confirme ta disponibilité, demande les informations nécessaires.',
-      facture: 'C\'est une question de FACTURATION. Réponds professionnellement et fournis ce qui est demandé.',
+      urgent:  "C'est une URGENCE. Réponds de façon rassurante, mentionne ta disponibilité immédiate.",
+      devis:   "C'est une demande de DEVIS. Réponds commercialement, propose une visite technique.",
+      rdv:     "C'est une demande de RDV. Confirme ta disponibilité, demande les informations nécessaires.",
+      facture: "C'est une question de FACTURATION. Réponds professionnellement et fournis ce qui est demandé.",
     };
 
     const systemPrompt = `Tu es un ${metierDesc} français professionnel qui répond à ses emails.
@@ -508,13 +509,46 @@ Règles strictes :
 - Aucun markdown, aucun astérisque, aucun tiret décoratif
 - 3 à 5 paragraphes courts
 - Commence par "Bonjour," et le prénom si disponible
-- Termine TOUJOURS par "Cordialement," puis une ligne vide puis "[Votre prénom] [Votre nom]"
+- Termine par "Cordialement," puis une ligne vide puis ton prénom et nom fictifs cohérents avec le métier
 - Sois concret et utile, pas vague`;
 
-    await callAnthropic(res, systemPrompt, [{
-      role: 'user',
-      content: `Email reçu de ${sender || 'un client'} :\nSujet : ${subject || 'Sans objet'}\n\n${body || subject}`,
-    }], 380, {});
+    const userMessage = `Email reçu de ${sender || 'un client'} :\nSujet : ${subject || 'Sans objet'}\n\n${body || subject}`;
+
+    let reply = '';
+
+    try {
+      const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        }),
+      });
+
+      if (!anthropicRes.ok) {
+        const errText = await anthropicRes.text();
+        console.error('Anthropic demo-reply error:', anthropicRes.status, errText);
+        throw new Error('Anthropic ' + anthropicRes.status);
+      }
+
+      const data = await anthropicRes.json();
+      reply = data.content?.[0]?.text || '';
+
+    } catch (anthropicErr) {
+      console.error('demo-reply Anthropic fallback:', anthropicErr.message);
+      // Local fallback
+      const local = localGenerateReply(body || subject, sender, subject, categorie);
+      reply = local.reply;
+    }
+
+    res.json({ reply });
 
   } catch (err) {
     console.error('Demo reply error:', err.message);
