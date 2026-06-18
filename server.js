@@ -121,6 +121,7 @@ app.use('/api/team',     apiLimiter,  require('./routes/team'));
 app.use('/api/support',  apiLimiter,  require('./routes/support'));
 app.use('/api/admin',    apiLimiter,  require('./routes/admin'));
 app.use('/api/emails',   apiLimiter,  require('./routes/emails'));
+app.use('/api/oauth',    apiLimiter,  require('./routes/oauth'));
 app.use('/api/cron',          require('./routes/cron'));
 app.use('/api/notifications', apiLimiter, require('./routes/notifications'));
 
