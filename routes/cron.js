@@ -309,8 +309,8 @@ p{font-size:14px;color:#4a4540;line-height:1.7;margin-bottom:12px}
 }
 
 function buildJ14Email(firstName, plan) {
-  const planNames = { solo: 'Solo ✨', team: 'Équipe ⭐', enterprise: 'Entreprise 🏢' };
-  const planPrices = { solo: '99€/mois', team: '900€/mois', enterprise: '1 780€/mois' };
+  const planNames = { solo: 'MailOne Solo ✨' };
+  const planPrices = { solo: '14,99€/mois' };
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <style>body{font-family:Arial,sans-serif;background:#f5f3ef;padding:24px}
 .c{max-width:560px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e0dbd2}

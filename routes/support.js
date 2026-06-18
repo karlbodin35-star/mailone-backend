@@ -29,7 +29,7 @@ const KB = [
   {
     id: 'pricing',
     patterns: ['tarif', 'prix', 'plan', 'plans', 'combien', 'cout', 'abonnement', 'solo', 'team', 'enterprise', 'payer', 'facturation', 'offre', 'formule', 'moins cher', 'cher'],
-    reply: `MailOne propose 3 plans :\n\n• Solo — 1 utilisateur, 500 réponses IA/mois\n• Team — 10 utilisateurs, 2 000 réponses IA/mois + chat interne + calendrier partagé\n• Enterprise — 50 utilisateurs, 5 000 réponses IA/mois, toutes les fonctionnalités\n\nEssai gratuit 14 jours sur tous les plans, sans carte bancaire.\nRéduction disponible sur l'abonnement annuel.`,
+    reply: `MailOne propose un plan unique :\n\n• MailOne Solo — 14,99€/mois HT — 1 boîte mail, toutes fonctionnalités incluses, 500 réponses IA/mois\n\nEssai gratuit 14 jours, sans carte bancaire.\nAbonnement annuel : 149,90€/an (2 mois offerts).`,
   },
   {
     id: 'free_trial',

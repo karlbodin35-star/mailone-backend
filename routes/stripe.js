@@ -13,12 +13,8 @@ const { purgeUserData } = require('../lib/security');
 
 // ── PRICE IDS MAP ────────────────────────────────────────────
 const PRICE_MAP = {
-  solo_monthly:       process.env.STRIPE_PRICE_SOLO_MONTHLY,
-  solo_annual:        process.env.STRIPE_PRICE_SOLO_ANNUAL,
-  team_monthly:       process.env.STRIPE_PRICE_TEAM_MONTHLY,
-  team_annual:        process.env.STRIPE_PRICE_TEAM_ANNUAL,
-  enterprise_monthly: process.env.STRIPE_PRICE_ENT_MONTHLY,
-  enterprise_annual:  process.env.STRIPE_PRICE_ENT_ANNUAL,
+  solo_monthly: process.env.STRIPE_PRICE_SOLO_MONTHLY,
+  solo_annual:  process.env.STRIPE_PRICE_SOLO_ANNUAL,
 };
 
 // ── CRÉER UNE SESSION CHECKOUT ───────────────────────────────
