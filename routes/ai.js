@@ -418,4 +418,108 @@ RÈGLES :
   }
 });
 
+// ── POST /api/ai/demo-analyze ─────────────────────────────────
+// Public (no auth) — quick JSON analysis for the demo page
+router.post('/demo-analyze', async (req, res) => {
+  try {
+    const { metier, sender, subject, body } = req.body;
+    if (!subject && !body) return res.status(400).json({ error: 'Contenu requis.' });
+
+    const metierDesc = {
+      plombier:    'plombier/chauffagiste',
+      electricien: 'électricien',
+      pme:         'responsable PME',
+    }[metier] || 'artisan';
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 220,
+        messages: [{
+          role: 'user',
+          content: `Analyse cet email pour un ${metierDesc}. Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ni après, sans markdown.
+
+Email de "${sender}", sujet: "${subject}"
+Corps: ${(body || '').slice(0, 600)}
+
+Format JSON requis (respecte exactement ces valeurs possibles) :
+{"categorie":"urgent|devis|rdv|facture","badge":"🚨 Urgent|📋 Devis|📅 RDV|💰 Facture","badgeColor":"#C0392B|#1D4ED8|#2A7A50|#B45309","priorite":"🔴 Critique|🔥 Commercial|🟢 Planification|🟡 Admin","delai":"Immédiat|Aujourd'hui|< 48h|Cette semaine","action":"verbe + objet en 5 mots max","ton":"Rassurant|Commercial|Expert|Formel|Cordial","resume":"résumé factuel en 12 mots max"}`,
+        }],
+      }),
+    });
+
+    if (!response.ok) throw new Error(`Anthropic ${response.status}`);
+    const data = await response.json();
+    const raw  = (data.content?.[0]?.text || '').trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('JSON invalide');
+    res.json(JSON.parse(jsonMatch[0]));
+
+  } catch (err) {
+    console.error('Demo analyze error:', err.message);
+    // Fallback local
+    const text   = ((req.body.subject || '') + ' ' + (req.body.body || '')).toLowerCase();
+    const isUrgent  = /urgent|panne|fuite|sos|panne/.test(text);
+    const isDevis   = /devis|tarif|prix|budget|offre/.test(text);
+    const isRdv     = /rendez-vous|rdv|créneau|disponible/.test(text);
+    const isFacture = /facture|règlement|virement|iban/.test(text);
+    const cat = isUrgent ? 'urgent' : isDevis ? 'devis' : isRdv ? 'rdv' : isFacture ? 'facture' : 'devis';
+    const map = {
+      urgent:  { badge:'🚨 Urgent',  badgeColor:'#C0392B', priorite:'🔴 Critique',    delai:'Immédiat',      action:'Appeler et intervenir',    ton:'Rassurant' },
+      devis:   { badge:'📋 Devis',   badgeColor:'#1D4ED8', priorite:'🔥 Commercial',  delai:'< 48h',         action:'Proposer une visite',      ton:'Commercial' },
+      rdv:     { badge:'📅 RDV',     badgeColor:'#2A7A50', priorite:'🟢 Planification',delai:'Cette semaine', action:'Confirmer le créneau',     ton:'Cordial' },
+      facture: { badge:'💰 Facture', badgeColor:'#B45309', priorite:'🟡 Admin',       delai:'Aujourd\'hui',  action:'Envoyer les coordonnées',  ton:'Pro' },
+    };
+    res.json({ categorie: cat, resume: (req.body.subject || '').slice(0, 60), ...map[cat] });
+  }
+});
+
+// ── POST /api/ai/demo-reply ───────────────────────────────────
+// Public (no auth) — streaming reply for the demo page
+router.post('/demo-reply', async (req, res) => {
+  try {
+    const { metier, sender, subject, body, ton, categorie } = req.body;
+    if (!subject && !body) return res.status(400).json({ error: 'Contenu requis.' });
+
+    const metierDesc = {
+      plombier:    'plombier/chauffagiste',
+      electricien: 'électricien',
+      pme:         'responsable PME',
+    }[metier] || 'artisan';
+
+    const catInstr = {
+      urgent:  'C\'est une URGENCE. Réponds de façon rassurante, mentionne ta disponibilité immédiate.',
+      devis:   'C\'est une demande de DEVIS. Réponds commercialement, propose une visite technique.',
+      rdv:     'C\'est une demande de RDV. Confirme ta disponibilité, demande les informations nécessaires.',
+      facture: 'C\'est une question de FACTURATION. Réponds professionnellement et fournis ce qui est demandé.',
+    };
+
+    const systemPrompt = `Tu es un ${metierDesc} français professionnel qui répond à ses emails.
+Ton à adopter : ${ton || 'Professionnel'}.
+${catInstr[categorie] || catInstr.devis}
+Règles strictes :
+- Français naturel et direct
+- Aucun markdown, aucun astérisque, aucun tiret décoratif
+- 3 à 5 paragraphes courts
+- Commence par "Bonjour," et le prénom si disponible
+- Termine TOUJOURS par "Cordialement," puis une ligne vide puis "[Votre prénom] [Votre nom]"
+- Sois concret et utile, pas vague`;
+
+    await callAnthropic(res, systemPrompt, [{
+      role: 'user',
+      content: `Email reçu de ${sender || 'un client'} :\nSujet : ${subject || 'Sans objet'}\n\n${body || subject}`,
+    }], 380, {});
+
+  } catch (err) {
+    console.error('Demo reply error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la génération.' });
+  }
+});
+
 module.exports = router;
