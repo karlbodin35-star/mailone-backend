@@ -7,6 +7,9 @@ const { generateToken, requireAuth } = require('../lib/auth');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../lib/emails');
 const { purgeUserData } = require('../lib/security');
 
+const BACKEND_URL  = process.env.BACKEND_URL  || 'https://mailone-backend.vercel.app';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://mailone.app';
+
 // ── INSCRIPTION ──────────────────────────────────────────────
 router.post('/register', async (req, res) => {
   try {
@@ -379,6 +382,124 @@ router.post('/reset-password', async (req, res) => {
   } catch (err) {
     console.error('Reset password error:', err);
     res.status(500).json({ error: 'Erreur lors de la réinitialisation.' });
+  }
+});
+
+// ── GOOGLE OAUTH LOGIN / INSCRIPTION ─────────────────────────
+router.get('/google/start', (req, res) => {
+  const params = new URLSearchParams({
+    client_id:     process.env.GOOGLE_CLIENT_ID,
+    redirect_uri:  `${BACKEND_URL}/api/auth/google/callback`,
+    response_type: 'code',
+    scope:         'email profile https://www.googleapis.com/auth/gmail.readonly',
+    access_type:   'offline',
+    prompt:        'consent',
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+});
+
+router.get('/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+  const errRedirect = (msg) =>
+    res.redirect(`${FRONTEND_URL}/login.html?google_error=${encodeURIComponent(msg)}&action=login`);
+
+  if (error || !code) return errRedirect(error === 'access_denied' ? 'Accès refusé' : 'Connexion annulée');
+
+  try {
+    // Échanger le code contre des tokens Google
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:    new URLSearchParams({
+        code,
+        client_id:     process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri:  `${BACKEND_URL}/api/auth/google/callback`,
+        grant_type:    'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (!tokenRes.ok) throw new Error(tokens.error_description || 'Échange de code échoué');
+
+    // Récupérer le profil Google
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v1/userinfo?alt=json', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const profile = await profileRes.json();
+    const email = (profile.email || '').toLowerCase();
+    if (!email) throw new Error('Email Google non disponible');
+
+    const firstName = profile.given_name  || profile.name?.split(' ')[0]            || 'Utilisateur';
+    const lastName  = profile.family_name || profile.name?.split(' ').slice(1).join(' ') || '';
+
+    // Trouver ou créer l'utilisateur
+    let { data: user } = await supabase.from('users').select('*').eq('email', email).single();
+
+    if (!user) {
+      // Nouveau compte — mot de passe aléatoire (jamais utilisé)
+      const randomPwdHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+      const { data: newUser, error: insertErr } = await supabase
+        .from('users')
+        .insert({ email, first_name: firstName, last_name: lastName, password_hash: randomPwdHash, company: '', is_active: true, marketing: false })
+        .select()
+        .single();
+      if (insertErr) throw insertErr;
+      user = newUser;
+
+      // Essai 14 jours
+      const trialEnd = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase.from('subscriptions').insert({
+        user_id: user.id, plan: 'solo', billing: 'monthly', status: 'trialing',
+        trial_end: trialEnd, current_period_start: new Date().toISOString(), current_period_end: trialEnd,
+      });
+
+      // Email de bienvenue (optionnel — ne bloque pas en cas d'erreur)
+      try { await sendWelcomeEmail({ email, firstName, plan: 'solo', trialEnd }); } catch (_) {}
+    }
+
+    // Stocker les tokens Gmail pour la lecture d'emails (même flux que oauth.js)
+    if (tokens.access_token) {
+      await supabase.from('oauth_connections').upsert({
+        user_id:      user.id,
+        provider:     'gmail',
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token || null,
+        token_expiry:  tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null,
+        email,
+        updated_at:   new Date().toISOString(),
+      }, { onConflict: 'user_id,provider' });
+    }
+
+    // Récupérer l'abonnement
+    const { data: sub } = await supabase
+      .from('subscriptions').select('*').eq('user_id', user.id)
+      .order('created_at', { ascending: false }).limit(1).single();
+
+    await supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+
+    // Émettre notre JWT
+    const jwtToken = generateToken(user.id);
+
+    // Construire l'objet utilisateur pour le frontend
+    const userObj = {
+      id:        user.id,
+      email:     user.email,
+      firstName: user.first_name,
+      lastName:  user.last_name,
+      company:   user.company || '',
+      plan:      sub?.plan    || 'solo',
+      billing:   sub?.billing || 'monthly',
+      status:    sub?.status  || 'trialing',
+      trialEnd:  sub?.trial_end || null,
+    };
+
+    // Rediriger vers le frontend avec JWT + user dans le fragment hash
+    const fragment = new URLSearchParams({ gt: jwtToken, u: JSON.stringify(userObj) }).toString();
+    res.redirect(`${FRONTEND_URL}/auth-callback.html#${fragment}`);
+
+  } catch (e) {
+    console.error('Google auth error:', e.message);
+    errRedirect(e.message || 'Erreur de connexion Google');
   }
 });
 
