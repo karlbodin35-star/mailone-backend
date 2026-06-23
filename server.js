@@ -146,26 +146,28 @@ app.use((err, req, res, next) => {
 });
 
 // ── DÉMARRAGE ─────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`\n🚀 MailOne Backend démarré`);
-  console.log(`   Port      : ${PORT}`);
-  console.log(`   Env       : ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Frontend  : ${process.env.FRONTEND_URL || 'non configuré'}`);
-  console.log(`   Supabase  : ${process.env.SUPABASE_URL ? '✅ configuré' : '❌ manquant'}`);
-  console.log(`   Stripe    : ${process.env.STRIPE_SECRET_KEY ? '✅ configuré' : '❌ manquant'}`);
-  console.log(`   Resend    : ${process.env.RESEND_API_KEY ? '✅ configuré' : '❌ manquant'}`);
-  console.log(`   Anthropic : ${process.env.ANTHROPIC_API_KEY ? '✅ configuré' : '❌ manquant'}`);
-  console.log(`\n   Routes disponibles :`);
-  console.log(`   POST /api/auth/register`);
-  console.log(`   POST /api/auth/login`);
-  console.log(`   GET  /api/auth/me`);
-  console.log(`   POST /api/stripe/create-checkout-session`);
-  console.log(`   POST /api/stripe/portal`);
-  console.log(`   POST /api/stripe/webhook`);
-  console.log(`   POST /api/ai/generate-reply`);
-  console.log(`   POST /api/ai/analyze`);
-  console.log(`   GET  /api/referral/my-code\n`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`\n🚀 MailOne Backend démarré`);
+    console.log(`   Port      : ${PORT}`);
+    console.log(`   Env       : ${process.env.NODE_ENV || 'development'}`);
+    console.log(`   Frontend  : ${process.env.FRONTEND_URL || 'non configuré'}`);
+    console.log(`   Supabase  : ${process.env.SUPABASE_URL ? '✅ configuré' : '❌ manquant'}`);
+    console.log(`   Stripe    : ${process.env.STRIPE_SECRET_KEY ? '✅ configuré' : '❌ manquant'}`);
+    console.log(`   Resend    : ${process.env.RESEND_API_KEY ? '✅ configuré' : '❌ manquant'}`);
+    console.log(`   Anthropic : ${process.env.ANTHROPIC_API_KEY ? '✅ configuré' : '❌ manquant'}`);
+    console.log(`\n   Routes disponibles :`);
+    console.log(`   POST /api/auth/register`);
+    console.log(`   POST /api/auth/login`);
+    console.log(`   GET  /api/auth/me`);
+    console.log(`   POST /api/stripe/create-checkout-session`);
+    console.log(`   POST /api/stripe/portal`);
+    console.log(`   POST /api/stripe/webhook`);
+    console.log(`   POST /api/ai/generate-reply`);
+    console.log(`   POST /api/ai/analyze`);
+    console.log(`   GET  /api/referral/my-code\n`);
+  });
+}
 
 module.exports = app;
