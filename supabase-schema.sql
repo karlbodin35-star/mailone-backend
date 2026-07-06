@@ -212,3 +212,18 @@ $$ language plpgsql;
 create trigger on_user_created_email_sequence
   after insert on users
   for each row execute function create_email_sequence();
+
+-- ── TABLE MAIL_STATUS (dashboard triage) ─────────────────────
+-- Mémorise uniquement l'identifiant du mail + son statut (traité/ignoré).
+-- AUCUN contenu de mail n'est stocké — cohérent avec la promesse
+-- « zéro donnée stockée sur nos serveurs » de la FAQ.
+create table if not exists mail_status (
+  id         uuid primary key default uuid_generate_v4(),
+  user_id    uuid references users(id) on delete cascade,
+  mail_id    text not null,
+  status     text check (status in ('handled','dismissed')) not null,
+  handled_at timestamptz default now(),
+  unique(user_id, mail_id)
+);
+
+create index if not exists idx_mail_status_user on mail_status(user_id);
