@@ -68,8 +68,15 @@ router.get('/', requireAuth, async (req, res) => {
     if (e instanceof MailboxError) {
       return res.status(e.status).json({ error: e.message, code: e.code });
     }
+    // Compte Google connecté sans avoir coché l'accès Gmail sur l'écran de consentement
+    if (/insufficient|scope/i.test(e.message)) {
+      return res.status(403).json({
+        error: 'MailOne n\'a pas l\'autorisation de lire vos emails. Reconnectez Gmail en cochant la case « Consulter vos messages ».',
+        code:  'SCOPE_MISSING',
+      });
+    }
     console.error('Dashboard error:', e.message);
-    res.status(500).json({ error: 'Impossible de charger vos mails.' });
+    res.status(500).json({ error: 'Impossible de charger vos mails : ' + e.message });
   }
 });
 

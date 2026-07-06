@@ -72,7 +72,7 @@ router.get('/gmail/callback', async (req, res) => {
     const profile = await profileRes.json();
     const email = profile.email || '';
 
-    await supabase.from('oauth_connections').upsert({
+    const { error: dbErr } = await supabase.from('oauth_connections').upsert({
       user_id:      userId,
       provider:     'gmail',
       access_token: tokens.access_token,
@@ -83,6 +83,7 @@ router.get('/gmail/callback', async (req, res) => {
       email,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,provider' });
+    if (dbErr) throw new Error('Enregistrement impossible : ' + dbErr.message);
 
     done(true, 'gmail', email, null);
   } catch (e) {
@@ -148,7 +149,7 @@ router.get('/outlook/callback', async (req, res) => {
     const profile = await profileRes.json();
     const email = profile.mail || profile.userPrincipalName || '';
 
-    await supabase.from('oauth_connections').upsert({
+    const { error: dbErr } = await supabase.from('oauth_connections').upsert({
       user_id:      userId,
       provider:     'outlook',
       access_token: tokens.access_token,
@@ -159,6 +160,7 @@ router.get('/outlook/callback', async (req, res) => {
       email,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,provider' });
+    if (dbErr) throw new Error('Enregistrement impossible : ' + dbErr.message);
 
     done(true, 'outlook', email, null);
   } catch (e) {
