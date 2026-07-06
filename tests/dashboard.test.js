@@ -62,7 +62,7 @@ const MAILS = [
 describe('GET /api/dashboard', () => {
   beforeEach(() => { jest.clearAllMocks(); });
 
-  it('retourne une liste unique avec catégorie + draft IA pour chaque mail, urgents en tête', async () => {
+  it('classe les mails en urgent/triés avec un draft IA sur les urgents', async () => {
     syncUserEmails.mockResolvedValue({ emails: MAILS, source: 'imap' });
     supabase.from.mockImplementation(() => mockQuery([]));
 
@@ -70,31 +70,26 @@ describe('GET /api/dashboard', () => {
 
     expect(res.body.user).toEqual({ firstName: 'Karl' });
     expect(res.body.urgentCount).toBe(1);
-    expect(res.body.mails).toHaveLength(3);
+    expect(res.body.urgent[0]).toMatchObject({ id: 101, from: 'Marie Durand', fromEmail: 'marie@client.fr' });
+    expect(res.body.urgent[0].aiDraft).toMatch(/Bonjour Marie/);
+    expect(res.body.urgent[0].aiDraft).toMatch(/urgence/i);
 
-    // L'urgent est en tête avec son draft
-    expect(res.body.mails[0]).toMatchObject({ id: 101, from: 'Marie Durand', fromEmail: 'marie@client.fr', urgent: true });
-    expect(res.body.mails[0].aiDraft).toMatch(/Bonjour Marie/);
-    expect(res.body.mails[0].aiDraft).toMatch(/urgence/i);
-
-    // Tous les mails ont corps + draft + catégorie
-    expect(res.body.mails.every(m => typeof m.body === 'string' && m.aiDraft && m.category)).toBe(true);
-    const categories = res.body.mails.map(m => m.category);
+    const categories = res.body.sorted.map(m => m.category);
     expect(categories).toContain('quote');
     expect(categories).toContain('invoice');
+    expect(res.body.sorted.every(m => m.body === undefined)).toBe(true); // pas de corps dans les triés
   });
 
-  it('un mail traité (mail_status) n\'est plus marqué urgent', async () => {
+  it('exclut des urgents un mail déjà traité (mail_status)', async () => {
     syncUserEmails.mockResolvedValue({ emails: MAILS, source: 'imap' });
     supabase.from.mockImplementation(() => mockQuery([{ mail_id: '101', status: 'handled' }]));
 
     const res = await request(app).get('/api/dashboard').expect(200);
 
     expect(res.body.urgentCount).toBe(0);
-    const handled = res.body.mails.find(m => m.id === 101);
+    const handled = res.body.sorted.find(m => m.id === 101);
     expect(handled).toBeDefined();
     expect(handled.status).toBe('handled');
-    expect(handled.urgent).toBe(false);
   });
 
   it('retourne 404 + NO_ACCOUNT si aucun compte configuré', async () => {
