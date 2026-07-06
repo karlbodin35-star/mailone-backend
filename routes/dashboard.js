@@ -25,43 +25,34 @@ router.get('/', requireAuth, async (req, res) => {
 
     const statusMap = new Map((statuses || []).map(s => [String(s.mail_id), s.status]));
 
-    const urgent = [];
-    const rest   = [];
-
-    for (const mail of emails) {
+    // Une seule liste : chaque mail porte son corps et sa réponse IA,
+    // générée à la volée par l'agent local — jamais mise en cache
+    // (promesse « zéro stockage serveur » de la FAQ)
+    const mails = emails.map(mail => {
       const { category } = localAnalyze(mail.body, mail.subject);
-      const handled = statusMap.has(String(mail.id));
+      const status  = statusMap.get(String(mail.id)) || null;
+      const { reply } = localGenerateReply(mail.body, mail.sender, mail.subject, category);
+      return {
+        id:         mail.id,
+        from:       mail.sender,
+        fromEmail:  mail.senderEmail,
+        subject:    mail.subject,
+        receivedAt: mail.date,
+        body:       mail.body,
+        category,
+        status,
+        urgent:     category === 'urgent' && !status,
+        aiDraft:    reply,
+      };
+    });
 
-      if (category === 'urgent' && !handled) {
-        // Draft généré à la volée par l'agent local — jamais mis en cache
-        // (promesse « zéro stockage serveur » de la FAQ)
-        const { reply } = localGenerateReply(mail.body, mail.sender, mail.subject, 'urgent');
-        urgent.push({
-          id:         mail.id,
-          from:       mail.sender,
-          fromEmail:  mail.senderEmail,
-          subject:    mail.subject,
-          receivedAt: mail.date,
-          body:       mail.body,
-          aiDraft:    reply,
-        });
-      } else {
-        rest.push({
-          id:         mail.id,
-          from:       mail.sender,
-          subject:    mail.subject,
-          category,
-          status:     statusMap.get(String(mail.id)) || null,
-          receivedAt: mail.date,
-        });
-      }
-    }
+    // Urgents non traités en tête, ordre chronologique conservé ensuite
+    mails.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
 
     res.json({
       user:        { firstName: req.user.first_name || '' },
-      urgentCount: urgent.length,
-      urgent,
-      sorted:      rest.slice(0, 10),
+      urgentCount: mails.filter(m => m.urgent).length,
+      mails,
     });
 
   } catch (e) {
