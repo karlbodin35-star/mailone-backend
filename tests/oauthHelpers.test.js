@@ -143,7 +143,7 @@ describe('fetchGmailEmails', () => {
         ok:   true,
         json: async () => ({
           id:      'abc1',
-          snippet: 'Objet de la fuite eau',
+          snippet: 'L&#39;eau coule &amp; d&eacute;borde partout',
           payload: {
             headers: [
               { name: 'From',    value: 'Jean Dupont <jean@plomberie.fr>' },
@@ -157,7 +157,7 @@ describe('fetchGmailEmails', () => {
         ok:   true,
         json: async () => ({
           id:      'abc2',
-          snippet: 'Demande de devis',
+          snippet: 'Demande de devis, Espace&amp;#160;Pro',
           payload: {
             headers: [
               { name: 'From',    value: 'Marie Martin <marie@client.fr>' },
@@ -177,11 +177,15 @@ describe('fetchGmailEmails', () => {
       senderEmail: 'jean@plomberie.fr',
       sender:      'Jean Dupont',
     });
+    // Entités HTML des snippets décodées (&#39; → ' , &amp; → &)
+    expect(emails[0].body).toBe("L'eau coule & d&eacute;borde partout");
     expect(emails[1]).toMatchObject({
       id:          'abc2',
       subject:     'Devis installation chaudière',
       senderEmail: 'marie@client.fr',
     });
+    // Double encodage (&amp;#160;) décodé jusqu'à stabilité → espace insécable
+    expect(emails[1].body).toBe('Demande de devis, Espace Pro');
   });
 
   it('filtre les emails dont le fetch individuel échoue (résistance partielle)', async () => {

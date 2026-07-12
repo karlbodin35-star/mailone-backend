@@ -322,6 +322,58 @@ RÈGLES :
   }
 });
 
+// ── POST /api/ai/translate-mail ───────────────────────────────
+// Mail en anglais → traduction FR du mail + réponse EN + traduction FR
+// de la réponse. Consomme 1 unité de quota (appel Anthropic).
+router.post('/translate-mail', requireAuth, requireSubscription, async (req, res) => {
+  try {
+    const { subject, body, sender } = req.body;
+    if (!body && !subject) return res.status(400).json({ error: 'Contenu requis.' });
+
+    const plan = req.subscription?.plan || 'solo';
+    const quotaCheck = await checkAndIncrementQuota(req.user.id, plan);
+    if (!quotaCheck.allowed) {
+      return res.status(429).json({ error: 'Quota IA mensuel atteint.', code: 'QUOTA_EXCEEDED' });
+    }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 900,
+        messages: [{
+          role: 'user',
+          content: `Tu aides un artisan français qui a reçu cet email. Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans markdown.
+
+Email de "${sender || 'un contact'}" — Sujet : "${(subject || '').slice(0, 200)}"
+${(body || '').slice(0, 1200)}
+
+Si l'email est principalement EN ANGLAIS, renvoie :
+{"lang":"en","mailFr":"traduction française fidèle et naturelle de l'email","reply":"réponse professionnelle EN ANGLAIS au nom de l'artisan (3-4 phrases, concrète, sans markdown)","replyFr":"traduction française de cette réponse"}
+
+Si l'email est en français (ou autre), renvoie : {"lang":"fr"}`,
+        }],
+      }),
+    });
+
+    if (!response.ok) throw new Error('Anthropic ' + response.status);
+    const data = await response.json();
+    const raw  = (data.content?.[0]?.text || '').trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('JSON invalide');
+    res.json(JSON.parse(jsonMatch[0]));
+
+  } catch (err) {
+    console.error('translate-mail error:', err.message);
+    res.status(500).json({ error: 'Traduction indisponible pour le moment.' });
+  }
+});
+
 // ── POST /api/ai/demo-analyze ─────────────────────────────────
 // Public (no auth) — quick JSON analysis for the demo page
 router.post('/demo-analyze', async (req, res) => {
