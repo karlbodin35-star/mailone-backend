@@ -86,6 +86,25 @@ describe('POST /api/ai/translate-mail (agent gratuit)', () => {
     }
   });
 
+  it('gère un mail espagnol : réponse rédigée en espagnol', async () => {
+    global.fetch
+      .mockReturnValueOnce(mockMyMemory('Bonjour, je voudrais un devis pour la rénovation de ma salle de bain.'))  // corps ES→FR
+      .mockReturnValueOnce(mockMyMemory('Demande de devis salle de bain'))                                          // sujet ES→FR
+      .mockReturnValueOnce(mockMyMemory('Hola, gracias por su solicitud. Le enviaré un presupuesto en breve.'));    // réponse FR→ES
+
+    const res = await request(app).post('/api/ai/translate-mail').send({
+      sender:  'Carlos García',
+      subject: 'Solicitud de presupuesto para el baño',
+      body:    'Hola, me gustaría recibir un presupuesto para la renovación de mi baño. Gracias por su respuesta y hasta pronto.',
+    }).expect(200);
+
+    expect(res.body.lang).toBe('es');
+    expect(res.body.langName).toBe('espagnol');
+    expect(res.body.engine).toBe('free');
+    expect(res.body.reply).toMatch(/Hola/);
+    expect(res.body.replyFr).toMatch(/Bonjour/);
+  });
+
   it('bascule sur Anthropic (avec quota) si le moteur gratuit échoue', async () => {
     const supabase = require('../lib/supabase');
     supabase.from.mockImplementation(() => ({

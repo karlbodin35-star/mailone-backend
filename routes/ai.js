@@ -323,29 +323,28 @@ RÈGLES :
 });
 
 // ── POST /api/ai/translate-mail ───────────────────────────────
-// Mail en anglais → traduction FR du mail + réponse EN + traduction FR
-// de la réponse.
+// Mail dans une des 20 langues → traduction FR du mail + réponse
+// DANS LA LANGUE DU CLIENT + traduction FR de la réponse.
 // 1) Agent GRATUIT : moteur de traduction libre + agent local (0 coût, 0 quota)
 // 2) Secours : Anthropic (1 unité de quota) si le moteur gratuit échoue
-const { detectEnglish, translate: freeTranslate } = require('../lib/freeTranslate');
+const { detectLanguage, translate: freeTranslate, LANG_NAMES_FR } = require('../lib/freeTranslate');
 
 router.post('/translate-mail', requireAuth, requireSubscription, async (req, res) => {
   try {
     const { subject, body, sender } = req.body;
     if (!body && !subject) return res.status(400).json({ error: 'Contenu requis.' });
 
-    if (!detectEnglish(`${subject || ''} ${body || ''}`)) {
-      return res.json({ lang: 'fr' });
-    }
+    const lang = detectLanguage(`${subject || ''} ${body || ''}`);
+    if (lang === 'fr') return res.json({ lang: 'fr' });
 
     // 1) Agent gratuit
     try {
-      const mailFr    = await freeTranslate(body || subject, 'en', 'fr');
-      const subjectFr = subject ? await freeTranslate(subject, 'en', 'fr') : '';
+      const mailFr    = await freeTranslate(body || subject, lang, 'fr');
+      const subjectFr = subject ? await freeTranslate(subject, lang, 'fr') : '';
       const { category }      = localAnalyze(mailFr, subjectFr);
       const { reply: replyFr } = localGenerateReply(mailFr, sender, subjectFr, category);
-      const reply = await freeTranslate(replyFr, 'fr', 'en');
-      return res.json({ lang: 'en', engine: 'free', subjectFr, mailFr, reply, replyFr });
+      const reply = await freeTranslate(replyFr, 'fr', lang);
+      return res.json({ lang, langName: LANG_NAMES_FR[lang] || lang, engine: 'free', subjectFr, mailFr, reply, replyFr });
     } catch (freeErr) {
       console.error('Traduction gratuite indisponible:', freeErr.message);
     }
@@ -374,10 +373,10 @@ router.post('/translate-mail', requireAuth, requireSubscription, async (req, res
 Email de "${sender || 'un contact'}" — Sujet : "${(subject || '').slice(0, 200)}"
 ${(body || '').slice(0, 1200)}
 
-Si l'email est principalement EN ANGLAIS, renvoie :
-{"lang":"en","mailFr":"traduction française fidèle et naturelle de l'email","reply":"réponse professionnelle EN ANGLAIS au nom de l'artisan (3-4 phrases, concrète, sans markdown)","replyFr":"traduction française de cette réponse"}
+Si l'email N'EST PAS en français, renvoie :
+{"lang":"code ISO 639-1 de la langue du mail","mailFr":"traduction française fidèle et naturelle de l'email","reply":"réponse professionnelle DANS LA LANGUE DU MAIL au nom de l'artisan (3-4 phrases, concrète, sans markdown)","replyFr":"traduction française de cette réponse"}
 
-Si l'email est en français (ou autre), renvoie : {"lang":"fr"}`,
+Si l'email est en français, renvoie : {"lang":"fr"}`,
         }],
       }),
     });
