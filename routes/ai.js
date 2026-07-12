@@ -324,12 +324,33 @@ RÈGLES :
 
 // ── POST /api/ai/translate-mail ───────────────────────────────
 // Mail en anglais → traduction FR du mail + réponse EN + traduction FR
-// de la réponse. Consomme 1 unité de quota (appel Anthropic).
+// de la réponse.
+// 1) Agent GRATUIT : moteur de traduction libre + agent local (0 coût, 0 quota)
+// 2) Secours : Anthropic (1 unité de quota) si le moteur gratuit échoue
+const { detectEnglish, translate: freeTranslate } = require('../lib/freeTranslate');
+
 router.post('/translate-mail', requireAuth, requireSubscription, async (req, res) => {
   try {
     const { subject, body, sender } = req.body;
     if (!body && !subject) return res.status(400).json({ error: 'Contenu requis.' });
 
+    if (!detectEnglish(`${subject || ''} ${body || ''}`)) {
+      return res.json({ lang: 'fr' });
+    }
+
+    // 1) Agent gratuit
+    try {
+      const mailFr    = await freeTranslate(body || subject, 'en', 'fr');
+      const subjectFr = subject ? await freeTranslate(subject, 'en', 'fr') : '';
+      const { category }      = localAnalyze(mailFr, subjectFr);
+      const { reply: replyFr } = localGenerateReply(mailFr, sender, subjectFr, category);
+      const reply = await freeTranslate(replyFr, 'fr', 'en');
+      return res.json({ lang: 'en', engine: 'free', subjectFr, mailFr, reply, replyFr });
+    } catch (freeErr) {
+      console.error('Traduction gratuite indisponible:', freeErr.message);
+    }
+
+    // 2) Secours Anthropic (quota consommé seulement ici)
     const plan = req.subscription?.plan || 'solo';
     const quotaCheck = await checkAndIncrementQuota(req.user.id, plan);
     if (!quotaCheck.allowed) {
