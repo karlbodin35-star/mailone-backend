@@ -124,6 +124,7 @@ app.use('/api/emails',   apiLimiter,  require('./routes/emails'));
 app.use('/api/oauth',    apiLimiter,  require('./routes/oauth'));
 app.use('/api/dashboard', apiLimiter, require('./routes/dashboard'));
 app.use('/api/mails',    apiLimiter,  require('./routes/mails'));
+app.use('/api/events',   apiLimiter,  require('./routes/events'));
 app.use('/api/cron',          require('./routes/cron'));
 app.use('/api/notifications', apiLimiter, require('./routes/notifications'));
 

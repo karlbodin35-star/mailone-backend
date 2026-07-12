@@ -227,3 +227,16 @@ create table if not exists mail_status (
 );
 
 create index if not exists idx_mail_status_user on mail_status(user_id);
+
+-- ── TABLE EVENTS (agenda) ────────────────────────────────────
+-- Rendez-vous créés par l'utilisateur — titre + date uniquement.
+create table if not exists events (
+  id         uuid primary key default uuid_generate_v4(),
+  user_id    uuid references users(id) on delete cascade,
+  title      text not null,
+  starts_at  timestamptz not null,
+  mail_id    text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_events_user on events(user_id, starts_at);
