@@ -10,6 +10,8 @@ const supabase = require('../lib/supabase');
 const { requireAuth } = require('../lib/auth');
 const { MailboxError, syncUserEmails } = require('../lib/mailbox');
 const { localAnalyze, localGenerateReply } = require('../lib/localAgent');
+const { waitingDays } = require('../lib/followup');
+const { upsertContactsFromMails } = require('../lib/contacts');
 
 // ── GET /api/dashboard ───────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
@@ -42,9 +44,14 @@ router.get('/', requireAuth, async (req, res) => {
         category,
         status,
         urgent:     category === 'urgent' && !status,
+        waitingDays: status ? 0 : waitingDays(mail.date),
         aiDraft:    reply,
       };
     });
+
+    // Carnet clients : extraction des coordonnées en arrière-plan
+    // (uniquement nom/email/téléphone/adresse — jamais le contenu du mail)
+    upsertContactsFromMails(req.user.id, emails).catch(e => console.error('contacts upsert:', e.message));
 
     // Urgents non traités en tête, ordre chronologique conservé ensuite
     mails.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0));
