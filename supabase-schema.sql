@@ -240,3 +240,33 @@ create table if not exists events (
 );
 
 create index if not exists idx_events_user on events(user_id, starts_at);
+
+-- ── TABLE CONTACTS (carnet clients) ──────────────────────────
+-- Coordonnées extraites des mails — JAMAIS le contenu des emails.
+create table if not exists contacts (
+  id         uuid primary key default uuid_generate_v4(),
+  user_id    uuid references users(id) on delete cascade,
+  name       text,
+  email      text not null,
+  phone      text,
+  address    text,
+  first_seen timestamptz default now(),
+  last_seen  timestamptz default now(),
+  unique(user_id, email)
+);
+create index if not exists idx_contacts_user on contacts(user_id, last_seen);
+
+-- ── TABLE PROSPECTS (agent veille/relance commerciale) ───────
+create table if not exists prospects (
+  id             uuid primary key default uuid_generate_v4(),
+  user_id        uuid references users(id) on delete cascade,
+  name           text not null,
+  metier         text,
+  ville          text,
+  canal          text default 'email',
+  statut         text check (statut in ('a_contacter','contacte','relance','repondu','client','perdu')) default 'a_contacter',
+  notes          text,
+  last_action_at timestamptz,
+  created_at     timestamptz default now()
+);
+create index if not exists idx_prospects_user on prospects(user_id, created_at);
