@@ -14,6 +14,7 @@ jest.mock('../lib/auth', () => ({
     next();
   },
   requireSubscription: (req, _res, next) => { req.subscription = { plan: 'solo', status: 'trialing' }; next(); },
+  requireAdmin: (_req, _res, next) => next(),
   generateToken: jest.fn(() => 'fake-jwt-token'),
 }));
 

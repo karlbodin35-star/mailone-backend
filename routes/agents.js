@@ -9,7 +9,7 @@
 const express  = require('express');
 const router   = express.Router();
 const supabase = require('../lib/supabase');
-const { requireAuth, requireSubscription } = require('../lib/auth');
+const { requireAuth, requireAdmin } = require('../lib/auth');
 
 const RELANCE_DELAY_DAYS = 4; // délai suggéré entre deux actions de prospection
 
@@ -42,7 +42,7 @@ function localContentPost(theme, platform) {
   };
 }
 
-router.post('/content', requireAuth, requireSubscription, (req, res) => {
+router.post('/content', requireAuth, requireAdmin, (req, res) => {
   const { theme, platform } = req.body || {};
   res.json({ post: localContentPost(theme, platform), engine: 'local' });
 });
@@ -63,7 +63,7 @@ function localProspectDrafts({ metier = 'artisan', ville = '', taille = '' }) {
   };
 }
 
-router.post('/prospect', requireAuth, requireSubscription, (req, res) => {
+router.post('/prospect', requireAuth, requireAdmin, (req, res) => {
   res.json({ drafts: localProspectDrafts(req.body || {}), engine: 'local', note: 'Brouillons uniquement — aucun envoi automatique.' });
 });
 
@@ -81,7 +81,7 @@ function withSuggestion(p) {
   };
 }
 
-router.get('/prospects', requireAuth, async (req, res) => {
+router.get('/prospects', requireAuth, requireAdmin, async (req, res) => {
   const { data, error } = await supabase
     .from('prospects')
     .select('*')
@@ -91,7 +91,7 @@ router.get('/prospects', requireAuth, async (req, res) => {
   res.json({ prospects: (data || []).map(withSuggestion) });
 });
 
-router.post('/prospects', requireAuth, async (req, res) => {
+router.post('/prospects', requireAuth, requireAdmin, async (req, res) => {
   const { name, metier, ville, canal, notes } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Le nom est requis.' });
   const { data, error } = await supabase.from('prospects').insert({
@@ -107,7 +107,7 @@ router.post('/prospects', requireAuth, async (req, res) => {
   res.json({ prospect: withSuggestion(data) });
 });
 
-router.patch('/prospects/:id', requireAuth, async (req, res) => {
+router.patch('/prospects/:id', requireAuth, requireAdmin, async (req, res) => {
   const patch = {};
   if (req.body?.statut && STATUTS.includes(req.body.statut)) {
     patch.statut = req.body.statut;
@@ -122,7 +122,7 @@ router.patch('/prospects/:id', requireAuth, async (req, res) => {
   res.json({ prospect: withSuggestion(data) });
 });
 
-router.delete('/prospects/:id', requireAuth, async (req, res) => {
+router.delete('/prospects/:id', requireAuth, requireAdmin, async (req, res) => {
   const { error } = await supabase.from('prospects').delete()
     .eq('id', req.params.id).eq('user_id', req.user.id);
   if (error) return res.status(500).json({ error: error.message });

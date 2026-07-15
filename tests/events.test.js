@@ -9,6 +9,7 @@ process.env.ENCRYPTION_KEY         = '000000000000000000000000000000000000000000
 jest.mock('../lib/auth', () => ({
   requireAuth: (req, _res, next) => { req.user = { id: 'user-test-123', email: 't@e.fr', first_name: 'Karl', is_active: true }; next(); },
   requireSubscription: (_req, _res, next) => next(),
+  requireAdmin: (_req, _res, next) => next(),
   generateToken: jest.fn(() => 'fake'),
 }));
 jest.mock('../lib/supabase', () => ({ from: jest.fn() }));

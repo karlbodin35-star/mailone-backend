@@ -270,6 +270,7 @@ router.get('/me', requireAuth, async (req, res) => {
       status: sub?.status || 'inactive',
       trialEnd: sub?.trial_end,
       currentPeriodEnd: sub?.current_period_end,
+      isAdmin: !!req.user.is_admin,
     },
   });
 });
