@@ -13,37 +13,30 @@ const { requireAuth, requireAdmin } = require('../lib/auth');
 const { nextRelance, relanceDue } = require('../agents/lib/relanceRules');
 
 // ── 2.1 AGENT CONTENU ────────────────────────────────────────
-function localContentPost(theme, platform) {
-  const t = String(theme || '').trim() || 'le quotidien d\'un artisan';
-  const insta = platform !== 'linkedin';
-  const hooks = [
-    `⏱️ ${t} : et si vous récupériez 1 h par jour ?`,
-    `La vérité sur ${t} (que personne ne dit aux artisans)`,
-    `3 erreurs qui vous font perdre des clients sur ${t}`,
-  ];
-  const bodies = [
-    `Chaque mail sans réponse, c'est un client qui appelle le concurrent.\n\nAvec MailOne, vos mails sont triés, les urgences remontent toutes seules et la réponse est déjà écrite — vous n'avez plus qu'à cliquer.\n\n30 secondes par mail au lieu de 8 minutes. Le soir, votre boîte est vide et votre tête aussi.`,
-    `On ne devient pas artisan pour passer ses soirées sur sa boîte mail.\n\n${t} ne devrait pas vous voler du temps de chantier (ni du temps en famille). L'IA trie, résume, prépare la réponse. Vous validez. Point.`,
-  ];
-  const ctas = insta
-    ? ['👉 Essai gratuit 14 jours — lien en bio', '📩 Réponds « MAIL » en DM, je t\'explique en 2 min']
-    : ['Essai gratuit 14 jours sur mailone.app — sans carte bancaire.', 'Curieux de voir ce que ça donne sur VOTRE boîte ? Commentez « démo ».'];
-  const hashtags = insta
-    ? '#artisan #plombier #electricien #TPE #gestion #gaindetemps #IA'
-    : '#artisanat #TPE #productivité #relationclient';
-  const pick = a => a[Math.floor(Math.random() * a.length)];
-  return {
-    platform: insta ? 'instagram' : 'linkedin',
-    text: `${pick(hooks)}\n\n${pick(bodies)}\n\n${pick(ctas)}\n\n${hashtags}`,
-    visual: insta
-      ? `Photo chantier réelle (avant/après) ou artisan au téléphone, souriant. Texte incrusté : « ${t} — 30 sec/mail ». Couleurs sombres + accent bleu électrique, logo MailOne en coin.`
-      : `Capture d'écran du dashboard MailOne (mode sombre) avec 3 mails triés, ou portrait pro de l'artisan. Format 1200×627.`,
-  };
-}
+// Génère caption + IMAGE (SVG, fontes embarquées) depuis la banque de 100 textes
+const BANK_POSTS = require('../agents/data/textes.json');
+const { renderSVG } = require('../agents/templates/visuals');
+const { fillTemplate } = require('../agents/lib/fill');
+const { nextUnused } = require('../agents/lib/rotation');
+
+const HASHTAGS = {
+  instagram: '#artisan #plombier #electricien #TPE #gestion #gaindetemps #IA #devis',
+  linkedin:  '#artisanat #TPE #productivité #relationclient',
+};
 
 router.post('/content', requireAuth, requireAdmin, (req, res) => {
-  const { theme, platform } = req.body || {};
-  res.json({ post: localContentPost(theme, platform), engine: 'local' });
+  const { category = 'benefice', format = 'post', platform = 'instagram', metier = '', ville = '' } = req.body || {};
+  const items = BANK_POSTS[category];
+  if (!items) return res.status(400).json({ error: `Catégorie inconnue (${Object.keys(BANK_POSTS).join(', ')})` });
+
+  const item = nextUnused(items);
+  const vars = { 'métier': metier, 'ville': ville };
+  const fill = t => fillTemplate(t || '', vars);
+  const data = { visuel: fill(item.visuel), sous: fill(item.sous), avant: fill(item.avant), apres: fill(item.apres) };
+  const caption = fill(item.caption) + '\n\n' + (HASHTAGS[platform] || HASHTAGS.instagram);
+  const svg = renderSVG(category, format === 'story' ? 'story' : 'post', data);
+
+  res.json({ id: item.id, caption, svg, format, engine: 'local' });
 });
 
 // ── 2.2 AGENT PROSPECTION (brouillons uniquement) ────────────

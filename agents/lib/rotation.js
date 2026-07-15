@@ -13,8 +13,12 @@ function loadUsed() {
   catch { return new Set(); }
 }
 function saveUsed(set) {
-  fs.mkdirSync(path.dirname(STORE), { recursive: true });
-  fs.writeFileSync(STORE, JSON.stringify([...set]), 'utf8');
+  // Sur Vercel le système de fichiers est en lecture seule : la rotation
+  // devient alors un simple tirage aléatoire, sans casser la génération.
+  try {
+    fs.mkdirSync(path.dirname(STORE), { recursive: true });
+    fs.writeFileSync(STORE, JSON.stringify([...set]), 'utf8');
+  } catch { /* no-op */ }
 }
 
 // Choisit un item non encore utilisé (réinitialise le cycle quand tout

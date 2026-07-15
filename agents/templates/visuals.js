@@ -7,8 +7,23 @@
 // Fontes : Space Grotesk (titres) / DM Sans (texte) avec repli Arial.
 // ══════════════════════════════════════════════════════════════
 
+const fs   = require('fs');
+const path = require('path');
+
 const FONT_TITLE = "'Space Grotesk', 'Segoe UI', Arial, sans-serif";
 const FONT_BODY  = "'DM Sans', 'Segoe UI', Arial, sans-serif";
+
+// Fontes OFL embarquées (agents/fonts/) pour un rendu identique partout —
+// navigateur, serveur Vercel, CLI — sans dépendre des polices installées.
+let FONT_CSS = '';
+try {
+  const sg = fs.readFileSync(path.join(__dirname, '..', 'fonts', 'SpaceGrotesk.ttf')).toString('base64');
+  const dm = fs.readFileSync(path.join(__dirname, '..', 'fonts', 'DMSans.ttf')).toString('base64');
+  FONT_CSS = `<style>
+    @font-face{font-family:'Space Grotesk';src:url(data:font/ttf;base64,${sg}) format('truetype');font-weight:300 700;}
+    @font-face{font-family:'DM Sans';src:url(data:font/ttf;base64,${dm}) format('truetype');font-weight:300 700;}
+  </style>`;
+} catch { /* fontes absentes → repli système, rendu dégradé mais valide */ }
 
 function escXml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -37,6 +52,7 @@ function shell(W, H, inner) {
   for (let x = 0; x <= W; x += 90) grid.push(`<line x1="${x}" y1="0" x2="${x}" y2="${H}"/>`);
   for (let y = 0; y <= H; y += 90) grid.push(`<line x1="0" y1="${y}" x2="${W}" y2="${y}"/>`);
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  ${FONT_CSS}
   <defs>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#5B8CFF"/><stop offset="1" stop-color="#9F7BFF"/>
