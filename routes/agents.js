@@ -10,8 +10,7 @@ const express  = require('express');
 const router   = express.Router();
 const supabase = require('../lib/supabase');
 const { requireAuth, requireAdmin } = require('../lib/auth');
-
-const RELANCE_DELAY_DAYS = 4; // délai suggéré entre deux actions de prospection
+const { nextRelance, relanceDue } = require('../agents/lib/relanceRules');
 
 // ── 2.1 AGENT CONTENU ────────────────────────────────────────
 function localContentPost(theme, platform) {
@@ -70,14 +69,14 @@ router.post('/prospect', requireAuth, requireAdmin, (req, res) => {
 // ── 2.3 AGENT VEILLE / RELANCE COMMERCIALE ───────────────────
 const STATUTS = ['a_contacter', 'contacte', 'relance', 'repondu', 'client', 'perdu'];
 
+// Règles partagées avec l'agent CLI : J+3 (contact), J+7 (relance), J+15 (répondu)
 function withSuggestion(p) {
-  const last = p.last_action_at ? new Date(p.last_action_at) : new Date(p.created_at);
-  const next = new Date(last.getTime() + RELANCE_DELAY_DAYS * 86400000);
-  const done = p.statut === 'client' || p.statut === 'perdu';
+  const ref  = p.last_action_at || p.created_at;
+  const next = nextRelance(p.statut, ref);
   return {
     ...p,
-    next_action_at: done ? null : next.toISOString(),
-    relance_due:    done ? false : next <= new Date(),
+    next_action_at: next ? next.toISOString() : null,
+    relance_due:    relanceDue(p.statut, ref),
   };
 }
 
