@@ -39,9 +39,9 @@ préexistante trouvée dans le repo.
 |---|---|---|
 | 3.1 Mentions légales LCEN | ✅ placeholders balisés | site `fde82b1` |
 | 3.2 Audit (liens, syntaxe JS, placeholders) | ✅ tout vert | — |
-| 3.2 Tests unitaires extraction + sans-réponse | ✅ 9 tests dédiés | backend `cc6abbd` |
+| 3.2 Tests unitaires extraction + sans-réponse | ✅ 7 tests dédiés | backend `cc6abbd` |
 
-**Suite de tests : 51 tests verts** (extraction contacts, normalisation téléphone,
+**Suite de tests : 42 tests verts** (extraction contacts, normalisation téléphone,
 détection sans réponse, buckets d'urgence, traduction 20 langues, dashboard,
 mails, agenda, OAuth…). Sécurité : Helmet + CSP + rate-limiting déjà en place.
 Hébergeurs renseignés en dur (Vercel + Supabase, données UE).
