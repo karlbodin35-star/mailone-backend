@@ -49,10 +49,21 @@ router.post('/:id/reply', requireAuth, async (req, res) => {
     if (!source) return res.status(404).json({ error: 'Aucun compte email configuré.', code: 'NO_ACCOUNT' });
 
     if (source.type === 'oauth') {
-      // TODO: envoi via l'API Gmail (scope gmail.send) — le scope OAuth actuel
-      // est readonly et l'OAuth Google n'est pas encore configuré (pas de
-      // GOOGLE_CLIENT_ID). Le frontend bascule sur un mailto pré-rempli
-      // quand il reçoit ce code.
+      // Envoi via l'API Gmail — PRÉPARÉ mais désactivé par feature flag.
+      // Activer : ENABLE_SEND=true sur Vercel + scope gmail.send
+      // (voir docs/GMAIL_SEND_UPGRADE.md). L'envoi reste déclenché par
+      // l'utilisateur (règle n°2 : l'IA propose, l'humain envoie).
+      if (process.env.ENABLE_SEND === 'true' && source.provider === 'gmail') {
+        const { getValidAccessToken, sendGmailReply } = require('../lib/oauthHelpers');
+        const accessToken = await getValidAccessToken(req.user.id, 'gmail');
+        if (!accessToken) return res.status(401).json({ error: 'Session Gmail expirée.', code: 'OAUTH_EXPIRED' });
+        const sent = await sendGmailReply(accessToken, req.params.id, String(content));
+        if (sent) {
+          await setMailStatus(req.user.id, req.params.id, 'handled');
+          return res.json({ success: true, to: sent.to });
+        }
+        // scope send manquant → fallback mailto côté client
+      }
       return res.status(501).json({
         error: 'Envoi non disponible pour les comptes OAuth pour le moment.',
         code:  'SEND_UNSUPPORTED',
