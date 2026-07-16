@@ -118,7 +118,8 @@ describe('POST /api/ai/translate-mail (agent gratuit)', () => {
     }));
 
     global.fetch
-      .mockRejectedValueOnce(new Error('MyMemory down'))   // moteur gratuit KO
+      .mockRejectedValueOnce(new Error('MyMemory down'))   // moteur gratuit n°1 KO
+      .mockRejectedValueOnce(new Error('gtx down'))        // moteur de secours n°2 KO
       .mockReturnValueOnce(Promise.resolve({               // Anthropic OK
         ok:   true,
         json: async () => ({ content: [{ text: '{"lang":"en","mailFr":"Bonjour…","reply":"Hello…","replyFr":"Bonjour…"}' }] }),
@@ -127,6 +128,6 @@ describe('POST /api/ai/translate-mail (agent gratuit)', () => {
     const res = await request(app).post('/api/ai/translate-mail').send(MAIL_EN).expect(200);
     expect(res.body.lang).toBe('en');
     expect(res.body.reply).toBe('Hello…');
-    expect(String(global.fetch.mock.calls[1][0])).toContain('anthropic');
+    expect(String(global.fetch.mock.calls[2][0])).toContain('anthropic');
   });
 });
