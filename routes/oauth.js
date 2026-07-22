@@ -24,7 +24,7 @@ router.get('/gmail/start', (req, res) => {
     client_id:     process.env.GOOGLE_CLIENT_ID,
     redirect_uri:  `${BACKEND_URL}/api/oauth/gmail/callback`,
     response_type: 'code',
-    scope:         'https://www.googleapis.com/auth/gmail.readonly email profile',
+    scope:         'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send email profile',
     access_type:   'offline',
     prompt:        'consent',
     state,
@@ -184,6 +184,27 @@ router.get('/status', requireAuth, async (req, res) => {
     email:       connections[0]?.email || null,
     connections,
   });
+});
+
+// ── GET /api/oauth/gmail-token ───────────────────────────────
+// Remet À SON PROPRIÉTAIRE son propre token d'accès Gmail (rafraîchi si
+// besoin) pour que le navigateur échange les pièces jointes en DIRECT
+// avec Gmail — aucun contenu de fichier ne transite par nos serveurs.
+router.get('/gmail-token', requireAuth, async (req, res) => {
+  const { data: conn } = await supabase
+    .from('oauth_connections')
+    .select('email')
+    .eq('user_id', req.user.id)
+    .eq('provider', 'gmail')
+    .single();
+  if (!conn) return res.status(404).json({ error: 'Aucune boîte Gmail connectée.', code: 'NO_GMAIL' });
+
+  const { getValidAccessToken } = require('../lib/oauthHelpers');
+  const accessToken = await getValidAccessToken(req.user.id, 'gmail');
+  if (!accessToken) {
+    return res.status(401).json({ error: 'Session Gmail expirée. Reconnectez votre boîte.', code: 'OAUTH_EXPIRED' });
+  }
+  res.json({ accessToken, email: conn.email });
 });
 
 // ── DELETE /api/oauth/:provider ───────────────────────────────

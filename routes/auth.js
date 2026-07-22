@@ -392,7 +392,7 @@ router.get('/google/start', (req, res) => {
     client_id:     process.env.GOOGLE_CLIENT_ID,
     redirect_uri:  `${BACKEND_URL}/api/auth/google/callback`,
     response_type: 'code',
-    scope:         'email profile https://www.googleapis.com/auth/gmail.readonly',
+    scope:         'email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send',
     access_type:   'offline',
     prompt:        'consent',
   });

@@ -110,6 +110,19 @@ router.post('/:id/reply', requireAuth, async (req, res) => {
   }
 });
 
+// ── POST /api/mails/:id/handled ──────────────────────────────
+// Marque « traité » un mail dont la réponse est partie DIRECTEMENT du
+// navigateur vers Gmail (envoi avec pièces jointes) — le contenu du
+// message ne transite jamais par ce serveur.
+router.post('/:id/handled', requireAuth, async (req, res) => {
+  try {
+    await setMailStatus(req.user.id, req.params.id, 'handled');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/mails/:id/dismiss ──────────────────────────────
 router.post('/:id/dismiss', requireAuth, async (req, res) => {
   try {
